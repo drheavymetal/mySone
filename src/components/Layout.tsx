@@ -1,5 +1,6 @@
 import Sidebar from "./Sidebar";
 import PlayerBar from "./PlayerBar";
+import NowPlayingDrawer from "./NowPlayingDrawer";
 import { ReactNode } from "react";
 
 interface LayoutProps {
@@ -13,6 +14,7 @@ export default function Layout({ children }: LayoutProps) {
         <Sidebar />
         <div className="flex-1 flex flex-col overflow-hidden">{children}</div>
       </div>
+      <NowPlayingDrawer />
       <PlayerBar />
     </div>
   );

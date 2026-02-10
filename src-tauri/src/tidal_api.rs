@@ -123,6 +123,38 @@ impl From<TidalPlaylistRaw> for TidalPlaylist {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TidalLyrics {
+    #[serde(default)]
+    pub track_id: Option<u64>,
+    #[serde(default)]
+    pub lyrics_provider: Option<String>,
+    #[serde(default)]
+    pub provider_commontrack_id: Option<String>,
+    #[serde(default)]
+    pub provider_lyrics_id: Option<String>,
+    #[serde(default)]
+    pub lyrics: Option<String>,
+    #[serde(default)]
+    pub subtitles: Option<String>,
+    #[serde(default)]
+    pub is_right_to_left: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TidalContributor {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TidalCredit {
+    #[serde(rename = "type")]
+    pub credit_type: String,
+    #[serde(default)]
+    pub contributors: Vec<TidalContributor>,
+}
+
 pub struct TidalClient {
     client: Client,
     pub tokens: Option<AuthTokens>,
@@ -768,5 +800,85 @@ impl TidalClient {
             
             Err(format!("Unknown manifest format '{}': {}", data.manifest_mime_type, &manifest_str[..manifest_str.len().min(300)]))
         }
+    }
+
+    pub fn get_track_lyrics(&self, track_id: u64) -> Result<TidalLyrics, String> {
+        let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
+
+        let response = self
+            .client
+            .get(format!("{}/tracks/{}/lyrics", TIDAL_API_URL, track_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[("countryCode", "US")])
+            .send()
+            .map_err(|e| format!("Failed to fetch lyrics: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(format!("Lyrics not available ({})", status));
+        }
+
+        serde_json::from_str::<TidalLyrics>(&body)
+            .map_err(|e| format!("Failed to parse lyrics: {} - Body: {}", e, body))
+    }
+
+    pub fn get_track_credits(&self, track_id: u64) -> Result<Vec<TidalCredit>, String> {
+        let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
+
+        let response = self
+            .client
+            .get(format!("{}/tracks/{}/credits", TIDAL_API_URL, track_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[("countryCode", "US")])
+            .send()
+            .map_err(|e| format!("Failed to fetch credits: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(format!("Credits not available ({})", status));
+        }
+
+        serde_json::from_str::<Vec<TidalCredit>>(&body)
+            .map_err(|e| format!("Failed to parse credits: {} - Body: {}", e, body))
+    }
+
+    pub fn get_track_radio(&self, track_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
+        let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
+
+        let response = self
+            .client
+            .get(format!("{}/tracks/{}/radio", TIDAL_API_URL, track_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[
+                ("countryCode", "US"),
+                ("limit", &limit.to_string()),
+            ])
+            .send()
+            .map_err(|e| format!("Failed to fetch track radio: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(format!("Track radio not available ({})", status));
+        }
+
+        // Tidal v1 radio endpoint may return { items: [...] } or a flat array
+        #[derive(Deserialize)]
+        struct RadioResponse {
+            items: Vec<TidalTrack>,
+        }
+
+        if let Ok(data) = serde_json::from_str::<RadioResponse>(&body) {
+            return Ok(data.items);
+        }
+
+        // Fallback: try parsing as a flat array
+        serde_json::from_str::<Vec<TidalTrack>>(&body)
+            .map_err(|e| format!("Failed to parse track radio: {} - Body: {}", e, body))
     }
 }

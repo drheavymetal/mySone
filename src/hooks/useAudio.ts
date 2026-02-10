@@ -93,6 +93,21 @@ export interface AuthTokens {
   user_id?: number;
 }
 
+export interface Lyrics {
+  trackId?: number;
+  lyricsProvider?: string;
+  providerCommontrackId?: string;
+  providerLyricsId?: string;
+  lyrics?: string;
+  subtitles?: string;
+  isRightToLeft: boolean;
+}
+
+export interface Credit {
+  creditType: string;
+  contributors: { name: string }[];
+}
+
 interface PlaybackSnapshot {
   currentTrack: Track | null;
   queue: Track[];
@@ -112,6 +127,7 @@ export function useAudio() {
   const [authTokens, setAuthTokens] = useState<AuthTokens | null>(null);
   const [currentView, setCurrentView] = useState<AppView>({ type: "home" });
   const [history, setHistory] = useState<Track[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const currentTrackRef = useRef<Track | null>(null);
   const hasRestoredPlaybackRef = useRef(false);
   const volumePersistReady = useRef(false);
@@ -655,6 +671,50 @@ export function useAudio() {
     setCurrentView({ type: "home" });
   };
 
+  const toggleDrawer = () => {
+    setDrawerOpen((prev) => !prev);
+  };
+
+  const getTrackLyrics = useCallback(
+    async (trackId: number): Promise<Lyrics> => {
+      try {
+        return await invoke<Lyrics>("get_track_lyrics", { trackId });
+      } catch (error: any) {
+        console.error("Failed to get lyrics:", error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  const getTrackCredits = useCallback(
+    async (trackId: number): Promise<Credit[]> => {
+      try {
+        return await invoke<Credit[]>("get_track_credits", { trackId });
+      } catch (error: any) {
+        console.error("Failed to get credits:", error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  const getTrackRadio = useCallback(
+    async (trackId: number, limit: number = 20): Promise<Track[]> => {
+      try {
+        return await invoke<Track[]>("get_track_radio", { trackId, limit });
+      } catch (error: any) {
+        console.error("Failed to get track radio:", error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  const removeFromQueue = useCallback((index: number) => {
+    setQueue((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const playNext = useCallback(async () => {
     if (queue.length > 0) {
       const [nextTrack, ...rest] = queue;
@@ -750,10 +810,12 @@ export function useAudio() {
     currentTrack,
     volume,
     queue,
+    history,
     isAuthenticated,
     userPlaylists,
     authTokens,
     currentView,
+    drawerOpen,
     playTrack,
     pauseTrack,
     resumeTrack,
@@ -762,6 +824,7 @@ export function useAudio() {
     getPlaybackPosition,
     addToQueue,
     setQueueTracks,
+    removeFromQueue,
     playNext,
     playPrevious,
     startAuth,
@@ -782,5 +845,10 @@ export function useAudio() {
     navigateToPlaylist,
     navigateToFavorites,
     navigateHome,
+    toggleDrawer,
+    setDrawerOpen,
+    getTrackLyrics,
+    getTrackCredits,
+    getTrackRadio,
   };
 }

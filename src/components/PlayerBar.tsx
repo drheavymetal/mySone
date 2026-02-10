@@ -35,6 +35,7 @@ export default function PlayerBar() {
     isTrackFavorited,
     addFavoriteTrack,
     removeFavoriteTrack,
+    toggleDrawer,
   } = useAudioContext();
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -248,7 +249,10 @@ export default function PlayerBar() {
       <div className="flex items-center gap-3 w-[30%] min-w-[180px]">
         {currentTrack ? (
           <>
-            <div className="w-16 h-16 rounded-md bg-[#282828] flex-shrink-0 overflow-hidden shadow-lg shadow-black/40 group cursor-pointer">
+            <div
+              onClick={toggleDrawer}
+              className="w-16 h-16 rounded-md bg-[#282828] flex-shrink-0 overflow-hidden shadow-lg shadow-black/40 group cursor-pointer"
+            >
               <TidalImage
                 src={getTidalImageUrl(currentTrack.album?.cover, 160)}
                 alt={currentTrack.album?.title || currentTrack.title}

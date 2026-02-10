@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
-use tidal_api::{AuthTokens, DeviceCode, PaginatedTracks, TidalAlbumDetail, TidalClient, TidalPlaylist, TidalTrack};
+use tidal_api::{AuthTokens, DeviceCode, PaginatedTracks, TidalAlbumDetail, TidalClient, TidalCredit, TidalLyrics, TidalPlaylist, TidalTrack};
 
 
 #[tauri::command]
@@ -229,6 +229,26 @@ fn get_stream_url(state: State<AppState>, track_id: u64, quality: String) -> Res
     client.get_stream_url(track_id, &quality)
 }
 
+// ==================== Track Metadata (Lyrics, Credits, Radio) ====================
+
+#[tauri::command(rename_all = "camelCase")]
+fn get_track_lyrics(state: State<AppState>, track_id: u64) -> Result<TidalLyrics, String> {
+    let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    client.get_track_lyrics(track_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn get_track_credits(state: State<AppState>, track_id: u64) -> Result<Vec<TidalCredit>, String> {
+    let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    client.get_track_credits(track_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn get_track_radio(state: State<AppState>, track_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
+    let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    client.get_track_radio(track_id, limit)
+}
+
 // ==================== Audio Playback ====================
 
 #[tauri::command(rename_all = "camelCase")]
@@ -325,6 +345,9 @@ pub fn run() {
             get_album_detail,
             get_album_tracks,
             get_stream_url,
+            get_track_lyrics,
+            get_track_credits,
+            get_track_radio,
             play_tidal_track,
             pause_track,
             resume_track,
