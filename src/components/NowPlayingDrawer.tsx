@@ -193,22 +193,52 @@ interface LrcLine {
   text: string;
 }
 
+function parseTimestamp(tag: string): number {
+  // Parse [mm:ss], [mm:ss.xx], [mm:ss.xxx], [mm:ss:xx]
+  const m = tag.match(/(\d{1,2}):(\d{2})(?:[.:]([\d]{1,3}))?/);
+  if (!m) return 0;
+  const mins = parseInt(m[1], 10);
+  const secs = parseInt(m[2], 10);
+  let ms = 0;
+  if (m[3]) {
+    ms =
+      m[3].length === 1
+        ? parseInt(m[3], 10) * 100
+        : m[3].length === 2
+        ? parseInt(m[3], 10) * 10
+        : parseInt(m[3], 10);
+  }
+  return mins * 60 + secs + ms / 1000;
+}
+
 function parseLrc(subtitles: string): LrcLine[] {
   const lines: LrcLine[] = [];
-  // Match [mm:ss.xx] or [mm:ss:xx] patterns
-  const regex = /\[(\d{1,2}):(\d{2})[.:]([\d]{2,3})\]\s*(.*)/g;
-  let match;
-  while ((match = regex.exec(subtitles)) !== null) {
-    const mins = parseInt(match[1], 10);
-    const secs = parseInt(match[2], 10);
-    const ms =
-      match[3].length === 2
-        ? parseInt(match[3], 10) * 10
-        : parseInt(match[3], 10);
-    const time = mins * 60 + secs + ms / 1000;
-    const text = match[4].trim();
-    if (text) lines.push({ time, text });
+  // Split into lines and process each
+  for (const raw of subtitles.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    // Extract all [mm:ss.xx] timestamps from the line
+    const timestamps: number[] = [];
+    const stripped = line.replace(
+      /\[(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]/g,
+      (_match, tag) => {
+        timestamps.push(parseTimestamp(tag));
+        return "";
+      }
+    );
+
+    const text = stripped.trim();
+    if (!text || timestamps.length === 0) continue;
+
+    // A line can have multiple timestamps (repeated lyrics)
+    for (const time of timestamps) {
+      lines.push({ time, text });
+    }
   }
+
+  // Sort by time
+  lines.sort((a, b) => a.time - b.time);
   return lines;
 }
 
@@ -222,8 +252,13 @@ function LyricsTab() {
   const [error, setError] = useState<string | null>(null);
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
+  const [userScrolled, setUserScrolled] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLParagraphElement | null)[]>([]);
+  const isAutoScrolling = useRef(false);
+  const scrollTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
 
   // Fetch lyrics
   useEffect(() => {
@@ -235,6 +270,7 @@ function LyricsTab() {
     setLyrics(null);
     setLrcLines([]);
     setActiveLine(-1);
+    setUserScrolled(false);
 
     getTrackLyrics(currentTrack.id)
       .then((result) => {
@@ -257,6 +293,22 @@ function LyricsTab() {
     };
   }, [currentTrack?.id]);
 
+  // Detect user-initiated scrolls vs programmatic scrolls
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || lrcLines.length === 0) return;
+
+    const onScroll = () => {
+      if (isAutoScrolling.current) return;
+      setUserScrolled(true);
+      // Reset the flag if user stops scrolling for a while (debounce)
+      clearTimeout(scrollTimeout.current);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [lrcLines]);
+
   // Sync active line with playback position
   useEffect(() => {
     if (lrcLines.length === 0 || !isPlaying) return;
@@ -278,15 +330,27 @@ function LyricsTab() {
     return () => clearInterval(interval);
   }, [lrcLines, isPlaying, getPlaybackPosition]);
 
-  // Auto-scroll to active line
+  // Auto-scroll to active line (only if user hasn't scrolled)
   const scrollToLine = useCallback((idx: number) => {
     const el = lineRefs.current[idx];
-    if (el && containerRef.current) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    const container = containerRef.current;
+    if (!el || !container) return;
+
+    isAutoScrolling.current = true;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Give the smooth scroll time to finish before re-enabling user detection
+    setTimeout(() => {
+      isAutoScrolling.current = false;
+    }, 600);
   }, []);
 
   useEffect(() => {
+    if (activeLine >= 0 && !userScrolled) scrollToLine(activeLine);
+  }, [activeLine, userScrolled, scrollToLine]);
+
+  // "Sync lyrics" button handler
+  const handleResync = useCallback(() => {
+    setUserScrolled(false);
     if (activeLine >= 0) scrollToLine(activeLine);
   }, [activeLine, scrollToLine]);
 
@@ -311,30 +375,50 @@ function LyricsTab() {
   if (lrcLines.length > 0) {
     lineRefs.current = [];
     return (
-      <div
-        ref={containerRef}
-        className="flex flex-col items-center gap-4 py-8 px-4"
-        dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}
-      >
-        {lrcLines.map((line, i) => (
-          <p
-            key={i}
-            ref={(el) => {
-              lineRefs.current[i] = el;
-            }}
-            className={`text-center transition-all duration-300 leading-snug ${
-              i === activeLine
-                ? "text-[24px] font-bold text-white scale-105"
-                : "text-[20px] font-medium text-[#5a5a5a]"
-            }`}
+      <div className="relative h-full">
+        <div
+          ref={containerRef}
+          className="h-full overflow-y-auto flex flex-col gap-3 py-10 px-2 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent"
+          dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}
+        >
+          {lrcLines.map((line, i) => {
+            const isActive = i === activeLine;
+            const isPast = activeLine >= 0 && i < activeLine;
+            return (
+              <p
+                key={i}
+                ref={(el) => {
+                  lineRefs.current[i] = el;
+                }}
+                className={`transition-all duration-500 ease-out cursor-default leading-snug ${
+                  isActive
+                    ? "text-[22px] font-bold text-white"
+                    : isPast
+                    ? "text-[18px] font-medium text-[#555]"
+                    : "text-[18px] font-medium text-[#777]"
+                }`}
+              >
+                {line.text}
+              </p>
+            );
+          })}
+          <div className="h-40" /> {/* bottom spacer */}
+          {lyrics?.lyricsProvider && (
+            <p className="text-[11px] text-[#535353] pb-4">
+              Lyrics provided by {lyrics.lyricsProvider}
+            </p>
+          )}
+        </div>
+
+        {/* Floating sync button — visible when user has scrolled away */}
+        {userScrolled && (
+          <button
+            onClick={handleResync}
+            className="absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2.5 bg-[#00FFFF] text-black text-[12px] font-bold rounded-full shadow-lg shadow-black/40 hover:brightness-110 active:scale-95 transition-all animate-fadeIn"
           >
-            {line.text}
-          </p>
-        ))}
-        {lyrics?.lyricsProvider && (
-          <p className="mt-8 text-[11px] text-[#535353]">
-            Lyrics provided by {lyrics.lyricsProvider}
-          </p>
+            <Mic2 size={14} />
+            Sync lyrics
+          </button>
         )}
       </div>
     );
@@ -342,11 +426,8 @@ function LyricsTab() {
 
   // Plain lyrics fallback
   return (
-    <div
-      className="flex flex-col items-center py-8 px-4"
-      dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}
-    >
-      <div className="whitespace-pre-wrap text-[20px] leading-relaxed text-[#b0b0b0] text-center max-w-[600px]">
+    <div className="py-8 px-2" dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}>
+      <div className="whitespace-pre-wrap text-[18px] leading-loose text-[#999]">
         {lyrics?.lyrics}
       </div>
       {lyrics?.lyricsProvider && (
@@ -561,7 +642,7 @@ export default function NowPlayingDrawer() {
   if (!drawerOpen || !currentTrack) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col">
+    <div className="fixed inset-0 bottom-[90px] z-40 flex flex-col">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
