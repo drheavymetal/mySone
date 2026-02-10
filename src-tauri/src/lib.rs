@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
-use tidal_api::{AuthTokens, DeviceCode, PaginatedTracks, TidalAlbumDetail, TidalClient, TidalCredit, TidalLyrics, TidalPlaylist, TidalTrack};
+use tidal_api::{AuthTokens, DeviceCode, PaginatedTracks, StreamInfo, TidalAlbumDetail, TidalClient, TidalCredit, TidalLyrics, TidalPlaylist, TidalTrack};
 
 
 #[tauri::command]
@@ -224,7 +224,7 @@ fn get_album_tracks(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn get_stream_url(state: State<AppState>, track_id: u64, quality: String) -> Result<String, String> {
+fn get_stream_url(state: State<AppState>, track_id: u64, quality: String) -> Result<StreamInfo, String> {
     let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
     client.get_stream_url(track_id, &quality)
 }
@@ -252,18 +252,18 @@ fn get_track_radio(state: State<AppState>, track_id: u64, limit: u32) -> Result<
 // ==================== Audio Playback ====================
 
 #[tauri::command(rename_all = "camelCase")]
-fn play_tidal_track(state: State<AppState>, track_id: u64) -> Result<(), String> {
-    // Get stream URL (fast API call – typically 200-500ms)
-    let stream_url = {
+fn play_tidal_track(state: State<AppState>, track_id: u64) -> Result<StreamInfo, String> {
+    // Get stream URL at max quality (fast API call – typically 200-500ms)
+    let stream_info = {
         let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
-        client.get_stream_url(track_id, "LOSSLESS")?
+        client.get_stream_url(track_id, "HI_RES_LOSSLESS")?
     };
 
-    println!("DEBUG: Dispatching background download for: {}", stream_url);
+    println!("DEBUG: Dispatching background download for: {}", stream_info.url);
 
     // Hand the URL to the audio player – the actual download + decode happens
     // on a background thread so this command returns almost immediately.
-    state.audio_player.play_url(stream_url)?;
+    state.audio_player.play_url(stream_info.url.clone())?;
 
     // Save last played track
     if let Some(mut settings) = state.load_settings() {
@@ -271,7 +271,7 @@ fn play_tidal_track(state: State<AppState>, track_id: u64) -> Result<(), String>
         state.save_settings(&settings).ok();
     }
 
-    Ok(())
+    Ok(stream_info)
 }
 
 #[tauri::command]

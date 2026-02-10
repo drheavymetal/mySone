@@ -155,6 +155,20 @@ pub struct TidalCredit {
     pub contributors: Vec<TidalContributor>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamInfo {
+    pub url: String,
+    #[serde(default)]
+    pub codec: Option<String>,
+    #[serde(default)]
+    pub bit_depth: Option<u32>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    #[serde(default)]
+    pub audio_quality: Option<String>,
+}
+
 pub struct TidalClient {
     client: Client,
     pub tokens: Option<AuthTokens>,
@@ -688,7 +702,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn get_stream_url(&self, track_id: u64, quality: &str) -> Result<String, String> {
+    pub fn get_stream_url(&self, track_id: u64, quality: &str) -> Result<StreamInfo, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -719,6 +733,12 @@ impl TidalClient {
         struct PlaybackInfo {
             manifest_mime_type: String,
             manifest: String,
+            #[serde(default)]
+            audio_quality: Option<String>,
+            #[serde(default)]
+            bit_depth: Option<u32>,
+            #[serde(default)]
+            sample_rate: Option<u32>,
         }
 
         let data = serde_json::from_str::<PlaybackInfo>(&body)
@@ -729,12 +749,11 @@ impl TidalClient {
             .map_err(|e| format!("Failed to decode manifest: {}", e))?;
         let manifest_str = String::from_utf8(manifest_bytes)
             .map_err(|e| format!("Invalid manifest encoding: {}", e))?;
-        
-        println!("DEBUG: Manifest MIME type = '{}'", data.manifest_mime_type);
-        println!("DEBUG: Decoded manifest = '{}'", &manifest_str[..manifest_str.len().min(500)]);
+
+        let mut codec: Option<String> = None;
 
         // Handle BTS format (JSON with urls array)
-        if data.manifest_mime_type.contains("vnd.tidal.bts") {
+        let url = if data.manifest_mime_type.contains("vnd.tidal.bts") {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
             #[allow(dead_code)]
@@ -748,41 +767,44 @@ impl TidalClient {
             let manifest_data = serde_json::from_str::<BtsManifest>(&manifest_str)
                 .map_err(|e| format!("Failed to parse BTS manifest: {} - Manifest: {}", e, manifest_str))?;
 
-            let url = manifest_data
+            codec = manifest_data.codecs.map(|c| c.to_uppercase().split('.').next().unwrap_or("").to_string());
+
+            manifest_data
                 .urls
                 .into_iter()
                 .next()
-                .ok_or("No URL in BTS manifest".to_string())?;
-            
-            println!("DEBUG: BTS Stream URL: {}", url);
-            Ok(url)
+                .ok_or("No URL in BTS manifest".to_string())?
         }
-        // Handle MPD/DASH format - extract URL from XML
+        // Handle MPD/DASH format
         else if data.manifest_mime_type.contains("dash+xml") {
-            // Parse the MPD XML to extract the base URL and segment template
-            // Look for BaseURL or SegmentTemplate initialization
+            // Extract codec from MPD
+            if let Some(codecs_start) = manifest_str.find("codecs=\"") {
+                let start = codecs_start + 8;
+                if let Some(codecs_end) = manifest_str[start..].find("\"") {
+                    let raw = &manifest_str[start..start + codecs_end];
+                    codec = Some(if raw.contains("flac") { "FLAC".to_string() } else { raw.to_uppercase() });
+                }
+            }
+
             if let Some(base_url_start) = manifest_str.find("<BaseURL>") {
                 let start = base_url_start + 9;
                 if let Some(base_url_end) = manifest_str[start..].find("</BaseURL>") {
-                    let url = &manifest_str[start..start + base_url_end];
-                    println!("DEBUG: MPD BaseURL: {}", url);
-                    return Ok(url.to_string());
+                    manifest_str[start..start + base_url_end].to_string()
+                } else {
+                    return Err("Malformed MPD manifest".to_string());
                 }
-            }
-            
-            // Try to find initialization URL in SegmentTemplate
-            if let Some(init_start) = manifest_str.find("initialization=\"") {
+            } else if let Some(init_start) = manifest_str.find("initialization=\"") {
                 let start = init_start + 16;
                 if let Some(init_end) = manifest_str[start..].find("\"") {
-                    let url = &manifest_str[start..start + init_end];
-                    println!("DEBUG: MPD initialization URL: {}", url);
-                    return Ok(url.to_string());
+                    manifest_str[start..start + init_end].to_string()
+                } else {
+                    return Err("Malformed MPD manifest".to_string());
                 }
+            } else {
+                return Err(format!("Could not extract URL from MPD manifest: {}", &manifest_str[..manifest_str.len().min(300)]));
             }
-            
-            Err(format!("Could not extract URL from MPD manifest: {}", &manifest_str[..manifest_str.len().min(300)]))
         }
-        // Try JSON format as fallback
+        // JSON fallback
         else {
             #[derive(Deserialize)]
             struct JsonManifest {
@@ -791,15 +813,26 @@ impl TidalClient {
 
             if let Ok(manifest_data) = serde_json::from_str::<JsonManifest>(&manifest_str) {
                 if let Some(urls) = manifest_data.urls {
-                    if let Some(url) = urls.into_iter().next() {
-                        println!("DEBUG: JSON fallback URL: {}", url);
-                        return Ok(url);
+                    if let Some(u) = urls.into_iter().next() {
+                        u
+                    } else {
+                        return Err("Empty URL list in manifest".to_string());
                     }
+                } else {
+                    return Err("No urls in JSON manifest".to_string());
                 }
+            } else {
+                return Err(format!("Unknown manifest format '{}': {}", data.manifest_mime_type, &manifest_str[..manifest_str.len().min(300)]));
             }
-            
-            Err(format!("Unknown manifest format '{}': {}", data.manifest_mime_type, &manifest_str[..manifest_str.len().min(300)]))
-        }
+        };
+
+        Ok(StreamInfo {
+            url,
+            codec,
+            bit_depth: data.bit_depth,
+            sample_rate: data.sample_rate,
+            audio_quality: data.audio_quality,
+        })
     }
 
     pub fn get_track_lyrics(&self, track_id: u64) -> Result<TidalLyrics, String> {

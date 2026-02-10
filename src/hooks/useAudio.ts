@@ -108,6 +108,14 @@ export interface Credit {
   contributors: { name: string }[];
 }
 
+export interface StreamInfo {
+  url: string;
+  codec?: string;
+  bitDepth?: number;
+  sampleRate?: number;
+  audioQuality?: string;
+}
+
 interface PlaybackSnapshot {
   currentTrack: Track | null;
   queue: Track[];
@@ -128,9 +136,12 @@ export function useAudio() {
   const [currentView, setCurrentView] = useState<AppView>({ type: "home" });
   const [history, setHistory] = useState<Track[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<string>("queue");
+  const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
   const currentTrackRef = useRef<Track | null>(null);
   const hasRestoredPlaybackRef = useRef(false);
   const volumePersistReady = useRef(false);
+  const playbackPersistReady = useRef(false);
 
   // Keep ref in sync so callbacks always see latest value
   useEffect(() => {
@@ -288,8 +299,15 @@ export function useAudio() {
   // Persist now-playing state and queue across app relaunches.
   // Keep this separate from volume persistence to avoid serializing large
   // queue/history payloads on every volume slider movement.
+  // Skip the very first run after restore — at that point state variables are
+  // still the initial defaults (null, [], []) and would overwrite saved data.
   useEffect(() => {
     if (!hasRestoredPlaybackRef.current) {
+      return;
+    }
+
+    if (!playbackPersistReady.current) {
+      playbackPersistReady.current = true;
       return;
     }
 
@@ -438,7 +456,10 @@ export function useAudio() {
       if (currentTrackRef.current) {
         setHistory((h) => [...h, currentTrackRef.current!]);
       }
-      await invoke("play_tidal_track", { trackId: track.id });
+      const info = await invoke<StreamInfo>("play_tidal_track", {
+        trackId: track.id,
+      });
+      setStreamInfo(info);
       setCurrentTrack(track);
       setIsPlaying(true);
     } catch (error: any) {
@@ -467,7 +488,10 @@ export function useAudio() {
       // re-dispatch the current track instead of sending a no-op resume.
       const isFinished = await invoke<boolean>("is_track_finished");
       if (isFinished) {
-        await invoke("play_tidal_track", { trackId: track.id });
+        const info = await invoke<StreamInfo>("play_tidal_track", {
+          trackId: track.id,
+        });
+        setStreamInfo(info);
       } else {
         await invoke("resume_track");
       }
@@ -675,6 +699,11 @@ export function useAudio() {
     setDrawerOpen((prev) => !prev);
   };
 
+  const openDrawerToTab = (tab: string) => {
+    setDrawerTab(tab);
+    setDrawerOpen(true);
+  };
+
   const getTrackLyrics = useCallback(
     async (trackId: number): Promise<Lyrics> => {
       try {
@@ -751,7 +780,10 @@ export function useAudio() {
 
       // Play previous track directly (playTrack would push to history again)
       try {
-        await invoke("play_tidal_track", { trackId: prevTrack.id });
+        const info = await invoke<StreamInfo>("play_tidal_track", {
+          trackId: prevTrack.id,
+        });
+        setStreamInfo(info);
         setCurrentTrack(prevTrack);
         setIsPlaying(true);
       } catch (error: any) {
@@ -816,6 +848,8 @@ export function useAudio() {
     authTokens,
     currentView,
     drawerOpen,
+    drawerTab,
+    streamInfo,
     playTrack,
     pauseTrack,
     resumeTrack,
@@ -847,6 +881,8 @@ export function useAudio() {
     navigateHome,
     toggleDrawer,
     setDrawerOpen,
+    setDrawerTab,
+    openDrawerToTab,
     getTrackLyrics,
     getTrackCredits,
     getTrackRadio,

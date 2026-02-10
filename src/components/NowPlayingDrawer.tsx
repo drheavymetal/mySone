@@ -626,8 +626,10 @@ function TrackRow({
 // ─── Main Drawer ─────────────────────────────────────────────────────────────
 
 export default function NowPlayingDrawer() {
-  const { currentTrack, drawerOpen, setDrawerOpen } = useAudioContext();
-  const [activeTab, setActiveTab] = useState<TabId>("queue");
+  const { currentTrack, drawerOpen, setDrawerOpen, drawerTab, setDrawerTab } =
+    useAudioContext();
+  const activeTab = (drawerTab || "queue") as TabId;
+  const setActiveTab = (tab: TabId) => setDrawerTab(tab);
 
   // Close on Escape
   useEffect(() => {

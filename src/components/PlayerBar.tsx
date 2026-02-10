@@ -12,7 +12,6 @@ import {
   Loader2,
   ListMusic,
   Mic2,
-  MonitorSpeaker,
 } from "lucide-react";
 import { useAudioContext } from "../contexts/AudioContext";
 import { getTidalImageUrl } from "../hooks/useAudio";
@@ -36,6 +35,8 @@ export default function PlayerBar() {
     addFavoriteTrack,
     removeFavoriteTrack,
     toggleDrawer,
+    openDrawerToTab,
+    streamInfo,
   } = useAudioContext();
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -214,32 +215,45 @@ export default function PlayerBar() {
   const VolumeIcon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   const getQualityBadge = () => {
-    if (!currentTrack?.audioQuality) return null;
+    const quality = streamInfo?.audioQuality || currentTrack?.audioQuality;
+    if (!quality) return null;
 
-    let bgColor = "#555";
-    let textColor = "white";
-    let label = "HIGH";
+    const isMax = quality === "HI_RES_LOSSLESS" || quality === "HI_RES";
+    const isHiFi = quality === "LOSSLESS";
 
-    if (
-      currentTrack.audioQuality === "HI_RES_LOSSLESS" ||
-      currentTrack.audioQuality === "HI_RES"
-    ) {
-      bgColor = "#ffd43b";
-      textColor = "black";
-      label = "MAX";
-    } else if (currentTrack.audioQuality === "LOSSLESS") {
-      bgColor = "#00ffff";
-      textColor = "black";
-      label = "HiFi";
+    // Build detail string like "24-BIT 48kHz FLAC"
+    const parts: string[] = [];
+    if (streamInfo?.bitDepth) parts.push(`${streamInfo.bitDepth}-BIT`);
+    if (streamInfo?.sampleRate) {
+      const sr = streamInfo.sampleRate;
+      parts.push(
+        sr >= 1000
+          ? `${(sr / 1000).toFixed(sr % 1000 === 0 ? 0 : 1)}kHz`
+          : `${sr}Hz`
+      );
     }
+    if (streamInfo?.codec) parts.push(streamInfo.codec);
+    const detail = parts.join(" ");
 
     return (
-      <span
-        className="px-1.5 py-[1px] text-[9px] font-black rounded-sm tracking-wider leading-none"
-        style={{ backgroundColor: bgColor, color: textColor }}
-      >
-        {label}
-      </span>
+      <div className="flex items-center gap-2">
+        {detail && (
+          <span className="text-[10px] text-[#888] font-medium tracking-wide hidden xl:inline">
+            {detail}
+          </span>
+        )}
+        <span
+          className={`px-2 py-0.5 text-[9px] font-black rounded tracking-wider leading-none ${
+            isMax
+              ? "bg-[#ffa726] text-black"
+              : isHiFi
+              ? "bg-[#1ed760] text-black"
+              : "bg-[#555] text-white"
+          }`}
+        >
+          {isMax ? "MAX" : isHiFi ? "HiFi" : "HIGH"}
+        </span>
+      </div>
     );
   };
 
@@ -405,12 +419,12 @@ export default function PlayerBar() {
       <div className="flex items-center justify-end gap-4 w-[30%] min-w-[180px]">
         {getQualityBadge()}
 
-        <button className="text-[#666] hover:text-white transition-colors duration-150">
+        <button
+          onClick={() => openDrawerToTab("lyrics")}
+          className="text-[#666] hover:text-white transition-colors duration-150"
+          title="Lyrics"
+        >
           <Mic2 size={16} strokeWidth={2} />
-        </button>
-
-        <button className="text-[#666] hover:text-white transition-colors duration-150">
-          <MonitorSpeaker size={16} strokeWidth={2} />
         </button>
 
         <div className="flex items-center gap-2 group/vol w-[120px]">
@@ -446,7 +460,11 @@ export default function PlayerBar() {
           </div>
         </div>
 
-        <button className="text-[#666] hover:text-white transition-colors duration-150">
+        <button
+          onClick={() => openDrawerToTab("queue")}
+          className="text-[#666] hover:text-white transition-colors duration-150"
+          title="Play queue"
+        >
           <ListMusic size={16} strokeWidth={2} />
         </button>
       </div>
