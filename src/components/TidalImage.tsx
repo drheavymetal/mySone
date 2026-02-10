@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ListMusic, Play } from "lucide-react";
 
 interface TidalImageProps {
@@ -8,7 +8,7 @@ interface TidalImageProps {
   type?: "album" | "playlist";
 }
 
-export default function TidalImage({
+function TidalImageComponent({
   src,
   alt,
   className = "",
@@ -49,3 +49,8 @@ export default function TidalImage({
     </div>
   );
 }
+
+const TidalImage = memo(TidalImageComponent);
+TidalImage.displayName = "TidalImage";
+
+export default TidalImage;

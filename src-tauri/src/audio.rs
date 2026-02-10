@@ -1,6 +1,8 @@
 use rodio::{Decoder, OutputStream, Sink, Source};
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
@@ -17,6 +19,11 @@ pub enum AudioCommand {
 
 pub struct AudioPlayer {
     sender: Sender<AudioCommand>,
+    /// Monotonic counter incremented on every play request.
+    /// Background download threads compare against this to detect if a newer
+    /// play request has superseded them (avoids stale downloads overriding the
+    /// latest track).
+    play_generation: Arc<AtomicU64>,
 }
 
 impl AudioPlayer {
@@ -116,13 +123,61 @@ impl AudioPlayer {
             }
         });
 
-        Self { sender }
+        Self {
+            sender,
+            play_generation: Arc::new(AtomicU64::new(0)),
+        }
     }
 
+    #[allow(dead_code)]
     pub fn play(&self, bytes: Vec<u8>) -> Result<(), String> {
+        self.play_generation.fetch_add(1, Ordering::SeqCst);
         self.sender
             .send(AudioCommand::Play(bytes))
             .map_err(|e| e.to_string())
+    }
+
+    /// Start playing a track from a URL. The download happens on a background
+    /// thread so this method returns almost immediately. A generation counter
+    /// ensures that if a newer play request arrives while the download is
+    /// in-flight the stale download is discarded.
+    pub fn play_url(&self, url: String) -> Result<(), String> {
+        let gen = self.play_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = Arc::clone(&self.play_generation);
+        let sender = self.sender.clone();
+
+        // Stop current playback right away so the user hears silence instead
+        // of the tail of the old track while the new one downloads.
+        sender.send(AudioCommand::Stop).ok();
+
+        thread::spawn(move || {
+            let response = match reqwest::blocking::get(&url) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to fetch stream from '{}': {}", url, e);
+                    return;
+                }
+            };
+
+            let bytes = match response.bytes() {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Failed to read stream bytes: {}", e);
+                    return;
+                }
+            };
+
+            // Only send Play if no newer request has been made in the meantime.
+            if generation.load(Ordering::SeqCst) != gen {
+                return;
+            }
+
+            if let Err(e) = sender.send(AudioCommand::Play(bytes.to_vec())) {
+                eprintln!("Failed to send Play command: {}", e);
+            }
+        });
+
+        Ok(())
     }
 
     pub fn pause(&self) -> Result<(), String> {

@@ -233,24 +233,17 @@ fn get_stream_url(state: State<AppState>, track_id: u64, quality: String) -> Res
 
 #[tauri::command(rename_all = "camelCase")]
 fn play_tidal_track(state: State<AppState>, track_id: u64) -> Result<(), String> {
-    // Get stream URL
+    // Get stream URL (fast API call – typically 200-500ms)
     let stream_url = {
         let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
         client.get_stream_url(track_id, "LOSSLESS")?
     };
 
-    println!("DEBUG: Fetching stream from URL: {}", stream_url);
-    
-    // Fetch audio file
-    let response = reqwest::blocking::get(&stream_url)
-        .map_err(|e| format!("Failed to fetch stream from '{}': {}", stream_url, e))?;
+    println!("DEBUG: Dispatching background download for: {}", stream_url);
 
-    let bytes = response
-        .bytes()
-        .map_err(|e| format!("Failed to read stream: {}", e))?;
-
-    // Play audio
-    state.audio_player.play(bytes.to_vec())?;
+    // Hand the URL to the audio player – the actual download + decode happens
+    // on a background thread so this command returns almost immediately.
+    state.audio_player.play_url(stream_url)?;
 
     // Save last played track
     if let Some(mut settings) = state.load_settings() {

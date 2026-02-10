@@ -97,10 +97,10 @@ interface PlaybackSnapshot {
   currentTrack: Track | null;
   queue: Track[];
   history: Track[];
-  volume: number;
 }
 
 const PLAYBACK_STATE_KEY = "tide-vibe.playback-state.v1";
+const VOLUME_STATE_KEY = "tide-vibe.volume.v1";
 
 export function useAudio() {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -150,8 +150,23 @@ export function useAudio() {
         );
       }
 
-      if (typeof parsed.volume === "number") {
-        setVolumeState(Math.min(1, Math.max(0, parsed.volume)));
+      // Backward compatibility: old snapshots included volume.
+      if (typeof (parsed as { volume?: number }).volume === "number") {
+        setVolumeState(
+          Math.min(1, Math.max(0, (parsed as { volume?: number }).volume!))
+        );
+      }
+
+      try {
+        const rawVolume = localStorage.getItem(VOLUME_STATE_KEY);
+        if (rawVolume != null) {
+          const parsedVolume = Number(rawVolume);
+          if (!Number.isNaN(parsedVolume)) {
+            setVolumeState(Math.min(1, Math.max(0, parsedVolume)));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to restore volume state:", err);
       }
     } catch (err) {
       console.error("Failed to restore playback state:", err);
@@ -245,7 +260,9 @@ export function useAudio() {
     loadAuth();
   }, []);
 
-  // Persist now-playing state and queue across app relaunches
+  // Persist now-playing state and queue across app relaunches.
+  // Keep this separate from volume persistence to avoid serializing large
+  // queue/history payloads on every volume slider movement.
   useEffect(() => {
     if (!hasRestoredPlaybackRef.current) {
       return;
@@ -255,7 +272,6 @@ export function useAudio() {
       currentTrack,
       queue,
       history,
-      volume,
     };
 
     try {
@@ -263,7 +279,20 @@ export function useAudio() {
     } catch (err) {
       console.error("Failed to persist playback state:", err);
     }
-  }, [currentTrack, queue, history, volume]);
+  }, [currentTrack, queue, history]);
+
+  // Persist volume separately as a small scalar value.
+  useEffect(() => {
+    if (!hasRestoredPlaybackRef.current) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(VOLUME_STATE_KEY, String(volume));
+    } catch (err) {
+      console.error("Failed to persist volume state:", err);
+    }
+  }, [volume]);
 
   // Auto-play next track when current finishes
   useEffect(() => {
@@ -329,6 +358,7 @@ export function useAudio() {
       setHistory([]);
       try {
         localStorage.removeItem(PLAYBACK_STATE_KEY);
+        localStorage.removeItem(VOLUME_STATE_KEY);
       } catch (err) {
         console.error("Failed to clear playback state:", err);
       }
@@ -350,20 +380,23 @@ export function useAudio() {
     }
   };
 
-  const getPlaylistTracks = async (playlistId: string): Promise<Track[]> => {
-    try {
-      console.log("Getting playlist tracks for:", playlistId);
-      const tracks = await invoke<Track[]>("get_playlist_tracks", {
-        playlistId: playlistId,
-      });
-      console.log("Got tracks:", tracks?.length);
-      return tracks || [];
-    } catch (error: any) {
-      console.error("Failed to get playlist tracks:", error);
-      alert(`Failed to get tracks: ${error?.message || error}`);
-      return [];
-    }
-  };
+  const getPlaylistTracks = useCallback(
+    async (playlistId: string): Promise<Track[]> => {
+      try {
+        console.log("Getting playlist tracks for:", playlistId);
+        const tracks = await invoke<Track[]>("get_playlist_tracks", {
+          playlistId: playlistId,
+        });
+        console.log("Got tracks:", tracks?.length);
+        return tracks || [];
+      } catch (error: any) {
+        console.error("Failed to get playlist tracks:", error);
+        alert(`Failed to get tracks: ${error?.message || error}`);
+        return [];
+      }
+    },
+    []
+  );
 
   const playTrack = async (track: Track) => {
     try {
@@ -431,31 +464,37 @@ export function useAudio() {
     setQueue(tracks);
   };
 
-  const getAlbumDetail = async (albumId: number): Promise<AlbumDetail> => {
-    try {
-      return await invoke<AlbumDetail>("get_album_detail", { albumId });
-    } catch (error: any) {
-      console.error("Failed to get album detail:", error);
-      throw error;
-    }
-  };
+  const getAlbumDetail = useCallback(
+    async (albumId: number): Promise<AlbumDetail> => {
+      try {
+        return await invoke<AlbumDetail>("get_album_detail", { albumId });
+      } catch (error: any) {
+        console.error("Failed to get album detail:", error);
+        throw error;
+      }
+    },
+    []
+  );
 
-  const getAlbumTracks = async (
-    albumId: number,
-    offset: number = 0,
-    limit: number = 50
-  ): Promise<PaginatedTracks> => {
-    try {
-      return await invoke<PaginatedTracks>("get_album_tracks", {
-        albumId,
-        offset,
-        limit,
-      });
-    } catch (error: any) {
-      console.error("Failed to get album tracks:", error);
-      throw error;
-    }
-  };
+  const getAlbumTracks = useCallback(
+    async (
+      albumId: number,
+      offset: number = 0,
+      limit: number = 50
+    ): Promise<PaginatedTracks> => {
+      try {
+        return await invoke<PaginatedTracks>("get_album_tracks", {
+          albumId,
+          offset,
+          limit,
+        });
+      } catch (error: any) {
+        console.error("Failed to get album tracks:", error);
+        throw error;
+      }
+    },
+    []
+  );
 
   const navigateToAlbum = (
     albumId: number,
@@ -477,22 +516,25 @@ export function useAudio() {
     setCurrentView({ type: "playlist", playlistId, playlistInfo });
   };
 
-  const getFavoriteTracks = async (
-    offset: number = 0,
-    limit: number = 50
-  ): Promise<PaginatedTracks> => {
-    if (!authTokens?.user_id) throw new Error("Not authenticated");
-    try {
-      return await invoke<PaginatedTracks>("get_favorite_tracks", {
-        userId: authTokens.user_id,
-        offset,
-        limit,
-      });
-    } catch (error: any) {
-      console.error("Failed to get favorite tracks:", error);
-      throw error;
-    }
-  };
+  const getFavoriteTracks = useCallback(
+    async (
+      offset: number = 0,
+      limit: number = 50
+    ): Promise<PaginatedTracks> => {
+      if (!authTokens?.user_id) throw new Error("Not authenticated");
+      try {
+        return await invoke<PaginatedTracks>("get_favorite_tracks", {
+          userId: authTokens.user_id,
+          offset,
+          limit,
+        });
+      } catch (error: any) {
+        console.error("Failed to get favorite tracks:", error);
+        throw error;
+      }
+    },
+    [authTokens?.user_id]
+  );
 
   const isTrackFavorited = async (trackId: number): Promise<boolean> => {
     if (!authTokens?.user_id) throw new Error("Not authenticated");
