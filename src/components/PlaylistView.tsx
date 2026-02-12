@@ -1,4 +1,4 @@
-import { Play, Pause, Music } from "lucide-react";
+import { Play, Pause, Music, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAudioContext } from "../contexts/AudioContext";
 import { getTidalImageUrl, type Track } from "../hooks/useAudio";
@@ -101,11 +101,19 @@ export default function PlaylistView({
 
   const playlistPlaying = !!(currentTrack && trackIds.has(currentTrack.id) && isPlaying);
 
+  const [showDescriptionModal, setShowDescriptionModal] = useState(false);
+
   const displayTitle = playlistInfo?.title || "Playlist";
   const displayDescription = playlistInfo?.description;
-  const displayCreator = playlistInfo?.creatorName || "You";
+  // Show "You" for user's own playlists, actual creator name for public ones
+  const displayCreator = playlistInfo?.isUserPlaylist
+    ? "You"
+    : playlistInfo?.creatorName || undefined;
   const displayTrackCount =
     tracks.length > 0 ? tracks.length : (playlistInfo?.numberOfTracks ?? 0);
+
+  // Show "Read more" if description is long enough to be truncated
+  const descriptionIsLong = (displayDescription?.length ?? 0) > 120;
 
   if (loading) {
     return (
@@ -161,13 +169,27 @@ export default function PlaylistView({
             {displayTitle}
           </h1>
           {displayDescription && (
-            <p className="text-[14px] text-[#a6a6a6] mt-1 line-clamp-2 max-w-[800px]">
-              {displayDescription}
-            </p>
+            <div className="mt-1 max-w-[800px]">
+              <p className="text-[14px] text-[#a6a6a6] line-clamp-2">
+                {displayDescription}
+              </p>
+              {descriptionIsLong && (
+                <button
+                  onClick={() => setShowDescriptionModal(true)}
+                  className="text-[13px] text-white font-semibold hover:underline mt-1"
+                >
+                  Read more
+                </button>
+              )}
+            </div>
           )}
           <div className="flex items-center gap-1.5 text-[14px] text-[#a6a6a6] mt-2">
-            <span className="text-white font-semibold">{displayCreator}</span>
-            <span className="mx-1">•</span>
+            {displayCreator && (
+              <>
+                <span className="text-white font-semibold">{displayCreator}</span>
+                <span className="mx-1">•</span>
+              </>
+            )}
             <span>
               {displayTrackCount} song{displayTrackCount !== 1 ? "s" : ""}
             </span>
@@ -211,6 +233,65 @@ export default function PlaylistView({
           </div>
         )}
       </div>
+
+      {/* Description Modal */}
+      {showDescriptionModal && displayDescription && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowDescriptionModal(false)}
+        >
+          <div
+            className="bg-[#181818] rounded-xl shadow-2xl max-w-[700px] w-[90%] max-h-[80vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            style={{ animation: "slideUp 0.2s ease-out" }}
+          >
+            {/* Header: cover + title + close */}
+            <div className="flex items-center gap-3 px-6 pt-5 pb-4">
+              <div className="w-11 h-11 shrink-0 rounded overflow-hidden bg-[#282828]">
+                {playlistInfo?.image ? (
+                  <TidalImage
+                    src={getTidalImageUrl(playlistInfo.image, 160)}
+                    alt={displayTitle}
+                    type="playlist"
+                    className="w-full h-full"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Music size={20} className="text-[#666]" />
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-bold text-white leading-tight truncate">
+                  {displayTitle}
+                </h3>
+                <p className="text-[13px] text-[#a6a6a6]">Description</p>
+              </div>
+              <button
+                onClick={() => setShowDescriptionModal(false)}
+                className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center hover:bg-[#2a2a2a] transition-colors text-[#a6a6a6] hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Description text */}
+            <div className="px-6 pb-6 overflow-y-auto custom-scrollbar">
+              {displayDescription
+                .split(/\n\n|\n/)
+                .filter((p) => p.trim())
+                .map((paragraph, i) => (
+                  <p
+                    key={i}
+                    className="text-[14px] text-[#d0d0d0] leading-[1.7] mb-4 last:mb-0"
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

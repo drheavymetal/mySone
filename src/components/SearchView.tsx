@@ -393,7 +393,7 @@ function PlaylistGrid({
               title: pl.title,
               image: pl.image,
               description: pl.description,
-              creatorName: pl.creator?.name || "You",
+              creatorName: pl.creator?.name || (pl.creator?.id === 0 ? "TIDAL" : undefined),
               numberOfTracks: pl.numberOfTracks,
             })
           }
@@ -421,7 +421,7 @@ function PlaylistGrid({
             {pl.title}
           </h4>
           <p className="text-[13px] text-[#a6a6a6] line-clamp-2">
-            {pl.description || `By ${pl.creator?.name || "You"}`}
+            {pl.description || (pl.creator?.name ? `By ${pl.creator.name}` : pl.creator?.id === 0 ? "By TIDAL" : "Playlist")}
           </p>
         </div>
       ))}

@@ -81,9 +81,8 @@ export default function Home() {
       title: playlist.title,
       image: playlist.image,
       description: playlist.description,
-      creatorName: playlist.creator?.name || "You",
+      creatorName: playlist.creator?.name || (playlist.creator?.id === 0 ? "TIDAL" : undefined),
       numberOfTracks: playlist.numberOfTracks,
-      isUserPlaylist: true,
     });
   };
 

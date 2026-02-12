@@ -8,11 +8,13 @@ import {
 import { useAudioContext } from "../contexts/AudioContext";
 import { getTidalImageUrl } from "../hooks/useAudio";
 import TidalImage from "./TidalImage";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 export default function Sidebar() {
   const {
     userPlaylists,
+    favoritePlaylists,
+    authTokens,
     navigateToPlaylist,
     navigateToFavorites,
     navigateHome,
@@ -20,14 +22,49 @@ export default function Sidebar() {
   } = useAudioContext();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const handlePlaylistClick = (playlist: (typeof userPlaylists)[number]) => {
+  const userId = authTokens?.user_id;
+
+  // Merge user-created + favorited playlists, deduplicated by uuid
+  const allPlaylists = useMemo(() => {
+    const seen = new Set<string>();
+    const merged = [];
+    for (const p of userPlaylists) {
+      if (!seen.has(p.uuid)) {
+        seen.add(p.uuid);
+        merged.push(p);
+      }
+    }
+    for (const p of favoritePlaylists) {
+      if (!seen.has(p.uuid)) {
+        seen.add(p.uuid);
+        merged.push(p);
+      }
+    }
+    return merged;
+  }, [userPlaylists, favoritePlaylists]);
+
+  const isOwnPlaylist = (playlist: (typeof allPlaylists)[number]) => {
+    if (!userId) return true; // fallback: assume own if we don't know
+    return playlist.creator?.id === userId;
+  };
+
+  /** Resolve a display name for the playlist creator */
+  const getCreatorName = (playlist: (typeof allPlaylists)[number]) => {
+    if (playlist.creator?.name) return playlist.creator.name;
+    // Tidal editorial playlists have creator.id === 0 but no name
+    if (playlist.creator?.id === 0) return "TIDAL";
+    return undefined;
+  };
+
+  const handlePlaylistClick = (playlist: (typeof allPlaylists)[number]) => {
+    const own = isOwnPlaylist(playlist);
     navigateToPlaylist(playlist.uuid, {
       title: playlist.title,
       image: playlist.image,
       description: playlist.description,
-      creatorName: playlist.creator?.name || "You",
+      creatorName: own ? undefined : getCreatorName(playlist),
       numberOfTracks: playlist.numberOfTracks,
-      isUserPlaylist: true,
+      isUserPlaylist: own,
     });
   };
 
@@ -107,7 +144,7 @@ export default function Sidebar() {
 
         {/* Playlists List */}
         <div className="flex-1 overflow-y-auto px-1.5 pb-2 custom-scrollbar">
-          {userPlaylists.length === 0 ? (
+          {allPlaylists.length === 0 ? (
             <div
               className={`px-3 py-8 text-center ${isCollapsed ? "hidden" : ""}`}
             >
@@ -123,7 +160,7 @@ export default function Sidebar() {
               {/* Loved Tracks - pinned at top */}
               <button
                 onClick={navigateToFavorites}
-                className={`w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-md transition-colors duration-150 group ${
+                className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
                   currentView.type === "favorites"
                     ? "bg-white/[0.08]"
                     : "hover:bg-white/[0.06]"
@@ -132,10 +169,10 @@ export default function Sidebar() {
               >
                 <div
                   className={`shrink-0 overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#450af5] via-[#8e2de2] to-[#00d2ff] ${
-                    isCollapsed ? "w-9 h-9 rounded" : "w-9 h-9 rounded"
+                    isCollapsed ? "w-10 h-10 rounded" : "w-10 h-10 rounded"
                   }`}
                 >
-                  <Heart size={14} className="text-white" fill="white" />
+                  <Heart size={15} className="text-white" fill="white" />
                 </div>
 
                 {!isCollapsed && (
@@ -150,44 +187,61 @@ export default function Sidebar() {
                 )}
               </button>
 
-              {userPlaylists.map((playlist) => (
-                <button
-                  key={playlist.uuid}
-                  onClick={() => handlePlaylistClick(playlist)}
-                  className={`w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-md transition-colors duration-150 group ${
-                    currentView.type === "playlist" &&
-                    currentView.playlistId === playlist.uuid
-                      ? "bg-white/[0.08]"
-                      : "hover:bg-white/[0.06]"
-                  } ${isCollapsed ? "justify-center" : ""}`}
-                  title={playlist.title}
-                >
-                  <div
-                    className={`bg-[#282828] shrink-0 overflow-hidden rounded ${
-                      isCollapsed ? "w-9 h-9" : "w-9 h-9"
-                    }`}
-                  >
-                    <TidalImage
-                      src={getTidalImageUrl(playlist.image, 80)}
-                      alt={playlist.title}
-                      type="playlist"
-                    />
-                  </div>
+              {allPlaylists.map((playlist) => {
+                const own = isOwnPlaylist(playlist);
+                const trackCount = playlist.numberOfTracks;
 
-                  {!isCollapsed && (
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-[13px] font-medium text-white truncate leading-tight">
-                        {playlist.title}
-                      </div>
-                      <div className="text-[11px] text-[#808080] truncate leading-tight mt-0.5">
-                        <span>Playlist</span>
-                        <span className="mx-0.5">&middot;</span>
-                        <span>{playlist.creator?.name || "You"}</span>
-                      </div>
+                // Build subtitle: "N tracks" for own playlists, "Creator name · N tracks" for public
+                const creatorLabel = !own ? getCreatorName(playlist) : undefined;
+                let subtitle = "";
+                if (creatorLabel) {
+                  subtitle = creatorLabel;
+                  if (trackCount != null) {
+                    subtitle += ` \u00B7 ${trackCount} track${trackCount !== 1 ? "s" : ""}`;
+                  }
+                } else if (trackCount != null) {
+                  subtitle = `${trackCount} track${trackCount !== 1 ? "s" : ""}`;
+                } else {
+                  subtitle = "Playlist";
+                }
+
+                return (
+                  <button
+                    key={playlist.uuid}
+                    onClick={() => handlePlaylistClick(playlist)}
+                    className={`w-full flex items-center gap-2.5 px-1.5 py-2 rounded-md transition-colors duration-150 group ${
+                      currentView.type === "playlist" &&
+                      currentView.playlistId === playlist.uuid
+                        ? "bg-white/[0.08]"
+                        : "hover:bg-white/[0.06]"
+                    } ${isCollapsed ? "justify-center" : ""}`}
+                    title={playlist.title}
+                  >
+                    <div
+                      className={`bg-[#282828] shrink-0 overflow-hidden rounded ${
+                        isCollapsed ? "w-10 h-10" : "w-10 h-10"
+                      }`}
+                    >
+                      <TidalImage
+                        src={getTidalImageUrl(playlist.image, 80)}
+                        alt={playlist.title}
+                        type="playlist"
+                      />
                     </div>
-                  )}
-                </button>
-              ))}
+
+                    {!isCollapsed && (
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-[13px] font-medium text-white truncate leading-tight">
+                          {playlist.title}
+                        </div>
+                        <div className="text-[11px] text-[#808080] truncate leading-tight mt-0.5">
+                          {subtitle}
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

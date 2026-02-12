@@ -91,6 +91,14 @@ pub struct TidalAlbum {
     pub cover: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TidalPlaylistCreator {
+    pub id: Option<u64>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TidalPlaylistRaw {
@@ -104,6 +112,8 @@ pub struct TidalPlaylistRaw {
     pub square_image: Option<String>,
     #[serde(default)]
     pub number_of_tracks: Option<u32>,
+    #[serde(default)]
+    pub creator: Option<TidalPlaylistCreator>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -114,6 +124,7 @@ pub struct TidalPlaylist {
     pub description: Option<String>,
     pub image: Option<String>,
     pub number_of_tracks: Option<u32>,
+    pub creator: Option<TidalPlaylistCreator>,
 }
 
 impl From<TidalPlaylistRaw> for TidalPlaylist {
@@ -125,6 +136,7 @@ impl From<TidalPlaylistRaw> for TidalPlaylist {
             // Prefer squareImage, fallback to image
             image: raw.square_image.or(raw.image),
             number_of_tracks: raw.number_of_tracks,
+            creator: raw.creator,
         }
     }
 }
@@ -558,6 +570,41 @@ impl TidalClient {
         }
 
         Ok(())
+    }
+
+    pub fn get_favorite_playlists(&self, user_id: u64) -> Result<Vec<TidalPlaylist>, String> {
+        let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
+
+        let response = self
+            .client
+            .get(format!("{}/users/{}/favorites/playlists", TIDAL_API_URL, user_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[("countryCode", "US"), ("limit", "50")])
+            .send()
+            .map_err(|e| format!("Failed to fetch favorite playlists: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(format!("Favorite playlists API error ({}): {}", status, body));
+        }
+
+        // The favorites endpoint wraps each playlist in { item: {...}, created: "..." }
+        #[derive(Deserialize)]
+        struct FavEntry {
+            item: TidalPlaylistRaw,
+        }
+        #[derive(Deserialize)]
+        struct FavResponse {
+            items: Vec<FavEntry>,
+        }
+
+        let data = serde_json::from_str::<FavResponse>(&body)
+            .map_err(|e| format!("Failed to parse favorite playlists: {} - Body: {}", e, body))?;
+
+        let playlists: Vec<TidalPlaylist> = data.items.into_iter().map(|e| e.item.into()).collect();
+        Ok(playlists)
     }
 
     pub fn get_playlist_tracks(&self, playlist_id: &str) -> Result<Vec<TidalTrack>, String> {

@@ -160,7 +160,7 @@ export default function HomeSection({ section }: HomeSectionProps) {
         title: item.title,
         image: item.squareImage || item.image,
         description: item.description,
-        creatorName: item.creator?.name,
+        creatorName: item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
         numberOfTracks: item.numberOfTracks,
       });
     } else if (item.id) {

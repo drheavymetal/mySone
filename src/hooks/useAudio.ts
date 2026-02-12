@@ -189,6 +189,7 @@ export function useAudio() {
   const [queue, setQueue] = useState<Track[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userPlaylists, setUserPlaylists] = useState<Playlist[]>([]);
+  const [favoritePlaylists, setFavoritePlaylists] = useState<Playlist[]>([]);
   const [authTokens, setAuthTokens] = useState<AuthTokens | null>(null);
   const [currentView, setCurrentView] = useState<AppView>({ type: "home" });
   const [history, setHistory] = useState<Track[]>([]);
@@ -327,6 +328,17 @@ export function useAudio() {
               });
               console.log("Loaded playlists:", playlists?.length);
               setUserPlaylists(playlists || []);
+
+              // Also load favorited (public) playlists
+              invoke<Playlist[]>("get_favorite_playlists", { userId })
+                .then((favPlaylists) => {
+                  console.log("Loaded favorite playlists:", favPlaylists?.length);
+                  setFavoritePlaylists(favPlaylists || []);
+                })
+                .catch((err) => {
+                  console.error("Failed to load favorite playlists:", err);
+                  setFavoritePlaylists([]);
+                });
             } catch (playlistErr: any) {
               const errStr = String(playlistErr);
               console.error("Failed to load playlists:", playlistErr);
@@ -358,12 +370,18 @@ export function useAudio() {
                     playlists?.length
                   );
                   setUserPlaylists(playlists || []);
+
+                  // Retry favorite playlists too
+                  invoke<Playlist[]>("get_favorite_playlists", { userId })
+                    .then((favPlaylists) => setFavoritePlaylists(favPlaylists || []))
+                    .catch(() => setFavoritePlaylists([]));
                 } catch (refreshErr) {
                   console.error("Token refresh failed:", refreshErr);
                   // Refresh failed - force re-login
                   setIsAuthenticated(false);
                   setAuthTokens(null);
                   setUserPlaylists([]);
+                  setFavoritePlaylists([]);
                 }
               } else {
                 setUserPlaylists([]);
@@ -527,6 +545,7 @@ export function useAudio() {
       setAuthTokens(null);
       setIsAuthenticated(false);
       setUserPlaylists([]);
+      setFavoritePlaylists([]);
       setCurrentTrack(null);
       setIsPlaying(false);
       setQueue([]);
@@ -1144,6 +1163,7 @@ export function useAudio() {
     history,
     isAuthenticated,
     userPlaylists,
+    favoritePlaylists,
     authTokens,
     currentView,
     drawerOpen,
