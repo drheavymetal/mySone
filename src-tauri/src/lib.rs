@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tidal_api::{AuthTokens, HomePageResponse, PaginatedTracks, StreamInfo, TidalAlbumDetail, TidalArtistDetail, TidalClient, TidalCredit, TidalLyrics, TidalPlaylist, TidalSearchResults, TidalTrack};
+use tidal_api::{AuthTokens, DeviceAuthResponse, HomePageResponse, PaginatedTracks, StreamInfo, TidalAlbumDetail, TidalArtistDetail, TidalClient, TidalCredit, TidalLyrics, TidalPlaylist, TidalSearchResults, TidalTrack};
 
 
 #[tauri::command]
@@ -140,19 +140,9 @@ fn load_saved_auth(state: State<AppState>) -> Result<Option<AuthTokens>, String>
     Ok(None)
 }
 
-// ==================== Credential Parser ====================
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ParsedCredentials {
-    client_id: Option<String>,
-    client_secret: Option<String>,
-    refresh_token: Option<String>,
-    access_token: Option<String>,
-}
+// ==================== Token Import (for web player client IDs) ====================
 
 /// Extract a value for `key=<value>` from URL-encoded / form-data text.
-/// Stops at `&`, `"`, `'`, or whitespace.
 fn extract_form_value(text: &str, key: &str) -> Option<String> {
     let pattern = format!("{}=", key);
     let start = text.find(&pattern)? + pattern.len();
@@ -161,41 +151,29 @@ fn extract_form_value(text: &str, key: &str) -> Option<String> {
         .find(|c: char| c == '&' || c == '"' || c == '\'' || c.is_whitespace())
         .unwrap_or(rest.len());
     let value = &rest[..end];
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    if value.is_empty() { None } else { Some(value.to_string()) }
 }
 
-/// Extract a value for `"key": "value"` or `'key': 'value'` from JSON-like text.
+/// Extract a value for `"key": "value"` from JSON-like text.
 fn extract_json_value(text: &str, key: &str) -> Option<String> {
-    // Try double-quoted key first, then single-quoted
     for quote in ['"', '\''] {
-        let patterns = [
-            format!("{q}{key}{q}", q = quote, key = key),
-        ];
-        for pat in &patterns {
-            if let Some(key_pos) = text.find(pat.as_str()) {
-                let after_key = &text[key_pos + pat.len()..];
-                // Skip optional whitespace and colon
-                let trimmed = after_key.trim_start();
-                let trimmed = if trimmed.starts_with(':') {
-                    trimmed[1..].trim_start()
-                } else if trimmed.starts_with('=') {
-                    trimmed[1..].trim_start()
-                } else {
-                    continue;
-                };
-                // Now extract the value inside quotes
-                for vq in ['"', '\''] {
-                    if trimmed.starts_with(vq) {
-                        let value_start = 1;
-                        if let Some(value_end) = trimmed[value_start..].find(vq) {
-                            let value = &trimmed[value_start..value_start + value_end];
-                            if !value.is_empty() {
-                                return Some(value.to_string());
-                            }
+        let pat = format!("{q}{key}{q}", q = quote, key = key);
+        if let Some(key_pos) = text.find(pat.as_str()) {
+            let after_key = &text[key_pos + pat.len()..];
+            let trimmed = after_key.trim_start();
+            let trimmed = if trimmed.starts_with(':') {
+                trimmed[1..].trim_start()
+            } else if trimmed.starts_with('=') {
+                trimmed[1..].trim_start()
+            } else {
+                continue;
+            };
+            for vq in ['"', '\''] {
+                if trimmed.starts_with(vq) {
+                    if let Some(end) = trimmed[1..].find(vq) {
+                        let value = &trimmed[1..1 + end];
+                        if !value.is_empty() {
+                            return Some(value.to_string());
                         }
                     }
                 }
@@ -205,89 +183,65 @@ fn extract_json_value(text: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Parses pasted curl commands, JSON response bodies, or form data to extract
-/// credentials and tokens.  Tries every extraction strategy and merges results.
-#[tauri::command(rename_all = "camelCase")]
-fn parse_credentials(raw_text: String) -> Result<ParsedCredentials, String> {
-    let text = raw_text.trim();
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ParsedTokens {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    refresh_token: Option<String>,
+    access_token: Option<String>,
+}
 
-    // Collect from form-data / URL-encoded (most common in curl request bodies)
+#[tauri::command(rename_all = "camelCase")]
+fn parse_token_data(raw_text: String) -> Result<ParsedTokens, String> {
+    let text = raw_text.trim();
     let form_id = extract_form_value(text, "client_id");
     let form_secret = extract_form_value(text, "client_secret");
     let form_refresh = extract_form_value(text, "refresh_token");
-
-    // Collect from JSON-style (response bodies, config files)
     let json_id = extract_json_value(text, "client_id");
     let json_secret = extract_json_value(text, "client_secret");
     let json_refresh = extract_json_value(text, "refresh_token");
     let json_access = extract_json_value(text, "access_token");
 
-    // Merge: prefer form values (from the curl request), fall back to JSON
     let client_id = form_id.or(json_id);
     let client_secret = form_secret.or(json_secret);
     let refresh_token = form_refresh.or(json_refresh);
-    let access_token = json_access; // only appears in JSON responses
+    let access_token = json_access;
 
-    // We need at least something useful
     if client_id.is_none() && refresh_token.is_none() && access_token.is_none() {
-        return Err(
-            "Could not find any credentials or tokens in the pasted text.\n\n\
-             Try pasting either:\n\
-             • The cURL command (Copy as cURL) for the token request\n\
-             • The Response body (JSON) from the same request"
-                .to_string(),
-        );
+        return Err("Could not find any credentials or tokens in the pasted text.".to_string());
     }
-
-    Ok(ParsedCredentials {
-        client_id,
-        client_secret,
-        refresh_token,
-        access_token,
-    })
+    Ok(ParsedTokens { client_id, client_secret, refresh_token, access_token })
 }
 
-/// Import a session directly using tokens extracted from the browser.
-/// If access_token is provided along with refresh_token, we use them directly.
-/// If only refresh_token is provided, we perform a refresh to get an access_token.
 #[tauri::command(rename_all = "camelCase")]
 fn import_session(
     state: State<AppState>,
     client_id: String,
-    client_secret: Option<String>,
+    client_secret: String,
     refresh_token: String,
     access_token: Option<String>,
 ) -> Result<AuthTokens, String> {
     if client_id.is_empty() || refresh_token.is_empty() {
         return Err("Client ID and refresh token are required".to_string());
     }
-
-    let secret = client_secret.unwrap_or_default();
-
     let mut client = state.tidal_client.lock().map_err(|e| e.to_string())?;
-    client.set_credentials(&client_id, &secret);
+    client.set_credentials(&client_id, &client_secret);
 
     let final_tokens = if let Some(at) = access_token.filter(|s| !s.is_empty()) {
-        // We already have a valid access token — use it directly.
         let tokens = AuthTokens {
             access_token: at,
             refresh_token: refresh_token.clone(),
-            expires_in: 86400, // assume 24h, will refresh when it expires
+            expires_in: 86400,
             token_type: "Bearer".to_string(),
             user_id: None,
         };
         client.tokens = Some(tokens.clone());
-
-        // Try to get user_id from session
         let user_id = client.get_session_info().ok();
-        let tokens = AuthTokens {
-            user_id,
-            ..tokens
-        };
+        let tokens = AuthTokens { user_id, ..tokens };
         client.tokens = Some(tokens.clone());
         tokens
     } else {
-        // No access token — perform a refresh to get one.
         client.tokens = Some(AuthTokens {
             access_token: String::new(),
             refresh_token: refresh_token.clone(),
@@ -298,7 +252,6 @@ fn import_session(
         client.refresh_token()?
     };
 
-    // Persist
     let mut settings = state.load_settings().unwrap_or(Settings {
         auth_tokens: None,
         volume: 1.0,
@@ -308,10 +261,53 @@ fn import_session(
     });
     settings.auth_tokens = Some(final_tokens.clone());
     settings.client_id = client_id;
-    settings.client_secret = secret;
+    settings.client_secret = client_secret;
     state.save_settings(&settings)?;
-
     Ok(final_tokens)
+}
+
+// ==================== Device Code Auth ====================
+
+#[tauri::command(rename_all = "camelCase")]
+fn start_device_auth(
+    state: State<AppState>,
+    client_id: String,
+    client_secret: String,
+) -> Result<DeviceAuthResponse, String> {
+    let mut client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    client.set_credentials(&client_id, &client_secret);
+    client.start_device_auth()
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn poll_device_auth(
+    state: State<AppState>,
+    device_code: String,
+    client_id: String,
+    client_secret: String,
+) -> Result<Option<AuthTokens>, String> {
+    let mut client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    client.set_credentials(&client_id, &client_secret);
+
+    match client.poll_device_token(&device_code)? {
+        Some(tokens) => {
+            // Save tokens and credentials
+            let mut settings = state.load_settings().unwrap_or(Settings {
+                auth_tokens: None,
+                volume: 1.0,
+                last_track_id: None,
+                client_id: String::new(),
+                client_secret: String::new(),
+            });
+            settings.auth_tokens = Some(tokens.clone());
+            settings.client_id = client_id;
+            settings.client_secret = client_secret;
+            state.save_settings(&settings)?;
+
+            Ok(Some(tokens))
+        }
+        None => Ok(None), // Still pending
+    }
 }
 
 /// Returns saved client credentials so the Login page can pre-fill them.
@@ -955,8 +951,10 @@ pub fn run() {
             greet,
             load_saved_auth,
             get_saved_credentials,
-            parse_credentials,
+            parse_token_data,
             import_session,
+            start_device_auth,
+            poll_device_auth,
             refresh_tidal_auth,
             start_pkce_auth,
             complete_pkce_auth,

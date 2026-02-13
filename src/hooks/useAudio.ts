@@ -113,11 +113,13 @@ export interface PkceAuthParams {
   clientUniqueKey: string;
 }
 
-export interface ParsedCredentials {
-  clientId?: string;
-  clientSecret?: string;
-  refreshToken?: string;
-  accessToken?: string;
+export interface DeviceAuthResponse {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  expiresIn: number;
+  interval: number;
 }
 
 export interface AuthTokens {
@@ -489,26 +491,30 @@ export function useAudio() {
     }
   };
 
-  const parseCredentials = async (
+  const parseTokenData = async (
     rawText: string
-  ): Promise<ParsedCredentials> => {
-    return await invoke<ParsedCredentials>("parse_credentials", { rawText });
+  ): Promise<{
+    clientId?: string;
+    clientSecret?: string;
+    refreshToken?: string;
+    accessToken?: string;
+  }> => {
+    return await invoke("parse_token_data", { rawText });
   };
 
   const importSession = async (
     clientId: string,
-    clientSecret: string | undefined,
+    clientSecret: string,
     refreshToken: string,
     accessToken?: string
   ): Promise<AuthTokens> => {
     try {
       const tokens = await invoke<AuthTokens>("import_session", {
         clientId,
-        clientSecret: clientSecret || null,
+        clientSecret,
         refreshToken,
         accessToken: accessToken || null,
       });
-
       let userId = tokens.user_id;
       if (!userId) {
         try {
@@ -517,13 +523,61 @@ export function useAudio() {
           console.error("Failed to get user ID:", e);
         }
       }
-
       const updatedTokens = { ...tokens, user_id: userId };
       setAuthTokens(updatedTokens);
       setIsAuthenticated(true);
       return updatedTokens;
     } catch (error) {
       console.error("Failed to import session:", error);
+      throw error;
+    }
+  };
+
+  const startDeviceAuth = async (
+    clientId: string,
+    clientSecret: string
+  ): Promise<DeviceAuthResponse> => {
+    try {
+      return await invoke<DeviceAuthResponse>("start_device_auth", {
+        clientId,
+        clientSecret,
+      });
+    } catch (error) {
+      console.error("Failed to start device auth:", error);
+      throw error;
+    }
+  };
+
+  const pollDeviceAuth = async (
+    deviceCode: string,
+    clientId: string,
+    clientSecret: string
+  ): Promise<AuthTokens | null> => {
+    try {
+      const result = await invoke<AuthTokens | null>("poll_device_auth", {
+        deviceCode,
+        clientId,
+        clientSecret,
+      });
+
+      if (result) {
+        let userId = result.user_id;
+        if (!userId) {
+          try {
+            userId = await invoke<number>("get_session_user_id");
+          } catch (e) {
+            console.error("Failed to get user ID:", e);
+          }
+        }
+        const updatedTokens = { ...result, user_id: userId };
+        setAuthTokens(updatedTokens);
+        setIsAuthenticated(true);
+        return updatedTokens;
+      }
+
+      return null; // still pending
+    } catch (error) {
+      console.error("Failed to poll device auth:", error);
       throw error;
     }
   };
@@ -1304,8 +1358,10 @@ export function useAudio() {
     playNext,
     playPrevious,
     getSavedCredentials,
-    parseCredentials,
+    parseTokenData,
     importSession,
+    startDeviceAuth,
+    pollDeviceAuth,
     startPkceAuth,
     completePkceAuth,
     logout,

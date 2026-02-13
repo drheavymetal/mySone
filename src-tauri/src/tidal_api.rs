@@ -214,6 +214,17 @@ pub struct HomePageResponse {
     pub sections: Vec<HomePageSection>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceAuthResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
 pub struct TidalClient {
     client: Client,
     pub tokens: Option<AuthTokens>,
@@ -299,6 +310,89 @@ impl TidalClient {
 
         self.tokens = Some(new_tokens.clone());
         Ok(new_tokens)
+    }
+
+    pub fn start_device_auth(&self) -> Result<DeviceAuthResponse, String> {
+        if self.client_id.is_empty() {
+            return Err("Client ID not configured".to_string());
+        }
+
+        let mut form_params = vec![
+            ("client_id", self.client_id.as_str()),
+            ("scope", "r_usr w_usr w_sub"),
+        ];
+        if !self.client_secret.is_empty() {
+            form_params.push(("client_secret", self.client_secret.as_str()));
+        }
+
+        let response = self
+            .client
+            .post(format!("{}/device_authorization", TIDAL_AUTH_URL))
+            .form(&form_params)
+            .send()
+            .map_err(|e| format!("Failed to start device auth: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            // Detect "not a Limited Input Device client" error and give a clear message
+            if body.contains("not a Limited Input Device client") || body.contains("sub_status\":1002") {
+                return Err(
+                    "This Client ID does not support the Device Code flow. \
+                     It is likely a web player Client ID. \
+                     Please use \"Token Import\" instead, or use a native app (Android/desktop) Client ID."
+                        .to_string(),
+                );
+            }
+            return Err(format!("Device auth failed ({}): {}", status, body));
+        }
+
+        serde_json::from_str::<DeviceAuthResponse>(&body)
+            .map_err(|e| format!("Failed to parse device auth response: {} - Body: {}", e, body))
+    }
+
+    pub fn poll_device_token(&mut self, device_code: &str) -> Result<Option<AuthTokens>, String> {
+        if self.client_id.is_empty() {
+            return Err("Client ID not configured".to_string());
+        }
+
+        let mut form_params = vec![
+            ("client_id", self.client_id.as_str()),
+            ("device_code", device_code),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("scope", "r_usr w_usr w_sub"),
+        ];
+        if !self.client_secret.is_empty() {
+            form_params.push(("client_secret", self.client_secret.as_str()));
+        }
+
+        let response = self
+            .client
+            .post(format!("{}/token", TIDAL_AUTH_URL))
+            .form(&form_params)
+            .send()
+            .map_err(|e| format!("Failed to poll device token: {}", e))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        // 400 with "authorization_pending" or "slow_down" means user hasn't authorized yet
+        if status.as_u16() == 400
+            && (body.contains("authorization_pending") || body.contains("slow_down"))
+        {
+            return Ok(None); // Still waiting -- caller should retry
+        }
+
+        if !status.is_success() {
+            return Err(format!("Device token poll failed ({}): {}", status, body));
+        }
+
+        let tokens = serde_json::from_str::<AuthTokens>(&body)
+            .map_err(|e| format!("Failed to parse device tokens: {} - Body: {}", e, body))?;
+
+        self.tokens = Some(tokens.clone());
+        Ok(Some(tokens))
     }
 
     pub fn exchange_pkce_code(
