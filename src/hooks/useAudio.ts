@@ -113,6 +113,13 @@ export interface PkceAuthParams {
   clientUniqueKey: string;
 }
 
+export interface ParsedCredentials {
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+  accessToken?: string;
+}
+
 export interface AuthTokens {
   access_token: string;
   refresh_token: string;
@@ -479,6 +486,45 @@ export function useAudio() {
     } catch (error) {
       console.error("Failed to get saved credentials:", error);
       return { clientId: "", clientSecret: "" };
+    }
+  };
+
+  const parseCredentials = async (
+    rawText: string
+  ): Promise<ParsedCredentials> => {
+    return await invoke<ParsedCredentials>("parse_credentials", { rawText });
+  };
+
+  const importSession = async (
+    clientId: string,
+    clientSecret: string | undefined,
+    refreshToken: string,
+    accessToken?: string
+  ): Promise<AuthTokens> => {
+    try {
+      const tokens = await invoke<AuthTokens>("import_session", {
+        clientId,
+        clientSecret: clientSecret || null,
+        refreshToken,
+        accessToken: accessToken || null,
+      });
+
+      let userId = tokens.user_id;
+      if (!userId) {
+        try {
+          userId = await invoke<number>("get_session_user_id");
+        } catch (e) {
+          console.error("Failed to get user ID:", e);
+        }
+      }
+
+      const updatedTokens = { ...tokens, user_id: userId };
+      setAuthTokens(updatedTokens);
+      setIsAuthenticated(true);
+      return updatedTokens;
+    } catch (error) {
+      console.error("Failed to import session:", error);
+      throw error;
     }
   };
 
@@ -1258,6 +1304,8 @@ export function useAudio() {
     playNext,
     playPrevious,
     getSavedCredentials,
+    parseCredentials,
+    importSession,
     startPkceAuth,
     completePkceAuth,
     logout,

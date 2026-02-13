@@ -240,26 +240,29 @@ impl TidalClient {
     }
 
     pub fn refresh_token(&mut self) -> Result<AuthTokens, String> {
-        if self.client_id.is_empty() || self.client_secret.is_empty() {
-            return Err("Client credentials not configured".to_string());
+        if self.client_id.is_empty() {
+            return Err("Client ID not configured".to_string());
         }
 
         let current_tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let refresh_tok = current_tokens.refresh_token.clone();
         let old_user_id = current_tokens.user_id;
 
-        let params = [
+        // Build params — include client_secret only if available
+        let mut form_params = vec![
             ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
             ("refresh_token", refresh_tok.as_str()),
             ("grant_type", "refresh_token"),
             ("scope", "r_usr w_usr w_sub"),
         ];
+        if !self.client_secret.is_empty() {
+            form_params.push(("client_secret", self.client_secret.as_str()));
+        }
 
         let response = self
             .client
             .post(format!("{}/token", TIDAL_AUTH_URL))
-            .form(&params)
+            .form(&form_params)
             .send()
             .map_err(|e| format!("Failed to refresh token: {}", e))?;
 
