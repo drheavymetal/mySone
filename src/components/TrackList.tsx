@@ -16,7 +16,7 @@ interface TrackListProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   loadingMore?: boolean;
-  context?: "album" | "playlist" | "favorites";
+  context?: "album" | "playlist" | "favorites" | "search";
   /** For "Remove from playlist" support */
   playlistId?: string;
   isUserPlaylist?: boolean;
@@ -62,6 +62,7 @@ export default function TrackList({
     currentTrack,
     isPlaying,
     navigateToAlbum,
+    navigateToArtist,
     favoriteTrackIds,
     addFavoriteTrack,
     removeFavoriteTrack,
@@ -243,7 +244,18 @@ export default function TrackList({
                     {track.title}
                   </span>
                   {!showArtist && (
-                     <span className="text-[13px] text-[#a6a6a6] truncate leading-snug group-hover:text-white transition-colors">
+                     <span
+                       className="text-[13px] text-[#a6a6a6] truncate leading-snug hover:text-white hover:underline transition-colors cursor-pointer"
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         if (track.artist?.id) {
+                           navigateToArtist(track.artist.id, {
+                             name: track.artist.name,
+                             picture: track.artist.picture,
+                           });
+                         }
+                       }}
+                     >
                        {track.artist?.name || "Unknown Artist"}
                      </span>
                   )}
@@ -253,7 +265,18 @@ export default function TrackList({
               {/* Artist (Column) */}
               {showArtist && (
                 <div className="flex items-center min-w-0">
-                  <span className="text-[14px] text-[#a6a6a6] truncate group-hover:text-white transition-colors">
+                  <span
+                    className="text-[14px] text-[#a6a6a6] truncate hover:text-white hover:underline transition-colors cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (track.artist?.id) {
+                        navigateToArtist(track.artist.id, {
+                          name: track.artist.name,
+                          picture: track.artist.picture,
+                        });
+                      }
+                    }}
+                  >
                     {track.artist?.name || "Unknown Artist"}
                   </span>
                 </div>

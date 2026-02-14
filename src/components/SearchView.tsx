@@ -1,4 +1,4 @@
-import { Play, Clock, Music, Loader2, Search } from "lucide-react";
+import { Play, Music, Loader2, Search, MoreHorizontal, User } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useAudioContext } from "../contexts/AudioContext";
 import {
@@ -11,21 +11,17 @@ import {
 } from "../hooks/useAudio";
 import TidalImage from "./TidalImage";
 import MediaContextMenu from "./MediaContextMenu";
+import ReusableTrackList from "./TrackList";
 
-type SearchTab = "top" | "tracks" | "albums" | "playlists";
+type SearchTab = "top" | "tracks" | "artists" | "albums" | "playlists";
 
 const TABS: { id: SearchTab; label: string }[] = [
   { id: "top", label: "Top results" },
   { id: "tracks", label: "Tracks" },
-  { id: "albums", label: "Albums" },
   { id: "playlists", label: "Playlists" },
+  { id: "albums", label: "Albums" },
+  { id: "artists", label: "Artists" },
 ];
-
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
 
 interface SearchViewProps {
   query: string;
@@ -36,10 +32,9 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
   const {
     playTrack,
     setQueueTracks,
-    currentTrack,
-    isPlaying,
     navigateToAlbum,
     navigateToPlaylist,
+    navigateToArtist,
     searchTidal,
   } = useAudioContext();
 
@@ -113,7 +108,8 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
     };
   }, [query]);
 
-  const handlePlayTrack = (track: Track, allTracks: Track[], index: number) => {
+  const handlePlayTrack = (track: Track, index: number) => {
+    const allTracks = results?.tracks || [];
     setQueueTracks(allTracks.slice(index + 1));
     playTrack(track);
   };
@@ -194,11 +190,29 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
                     <h2 className="text-[16px] font-bold text-white mb-3">
                       Tracks
                     </h2>
-                    <TrackList
+                    <ReusableTrackList
                       tracks={results.tracks.slice(0, 8)}
-                      currentTrack={currentTrack}
-                      isPlaying={isPlaying}
                       onPlay={handlePlayTrack}
+                      showCover={true}
+                      showArtist={true}
+                      showAlbum={true}
+                      context="search"
+                    />
+                  </section>
+                )}
+                {results.artists.length > 0 && (
+                  <section>
+                    <h2 className="text-[16px] font-bold text-white mb-3">
+                      Artists
+                    </h2>
+                    <ArtistGrid
+                      artists={results.artists.slice(0, 6)}
+                      onArtistClick={(artist) =>
+                        navigateToArtist(artist.id, {
+                          name: artist.name,
+                          picture: artist.picture,
+                        })
+                      }
                     />
                   </section>
                 )}
@@ -231,11 +245,27 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
 
             {/* Tracks tab */}
             {activeTab === "tracks" && results.tracks.length > 0 && (
-              <TrackList
+              <ReusableTrackList
                 tracks={results.tracks}
-                currentTrack={currentTrack}
-                isPlaying={isPlaying}
                 onPlay={handlePlayTrack}
+                showCover={true}
+                showArtist={true}
+                showAlbum={true}
+                context="search"
+              />
+            )}
+
+            {/* Artists tab */}
+            {activeTab === "artists" && results.artists.length > 0 && (
+              <ArtistGrid
+                artists={results.artists}
+                onArtistClick={(artist) =>
+                  navigateToArtist(artist.id, {
+                    name: artist.name,
+                    picture: artist.picture,
+                  })
+                }
+                large
               />
             )}
 
@@ -245,6 +275,7 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
                 albums={results.albums}
                 onAlbumClick={navigateToAlbum}
                 onContextMenu={handleAlbumContextMenu}
+                large
               />
             )}
 
@@ -254,6 +285,7 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
                 playlists={results.playlists}
                 onPlaylistClick={navigateToPlaylist}
                 onContextMenu={handlePlaylistContextMenu}
+                large
               />
             )}
           </div>
@@ -274,102 +306,52 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function TrackList({
-  tracks,
-  currentTrack,
-  isPlaying,
-  onPlay,
+function ArtistGrid({
+  artists,
+  onArtistClick,
+  large = false,
 }: {
-  tracks: Track[];
-  currentTrack: Track | null;
-  isPlaying: boolean;
-  onPlay: (track: Track, allTracks: Track[], index: number) => void;
+  artists: { id: number; name: string; picture?: string }[];
+  onArtistClick: (artist: { id: number; name: string; picture?: string }) => void;
+  large?: boolean;
 }) {
   return (
-    <div className="flex flex-col">
-      {/* Header row */}
-      <div className="grid grid-cols-[36px_1fr_minmax(120px,1fr)_72px] gap-4 px-4 py-2 text-[12px] text-[#a6a6a6] uppercase tracking-widest border-b border-[#2a2a2a] mb-1">
-        <span className="text-right">#</span>
-        <span>Title</span>
-        <span>Album</span>
-        <span className="flex justify-end">
-          <Clock size={15} />
-        </span>
-      </div>
-
-      {tracks.map((track, i) => {
-        const isActive = currentTrack?.id === track.id;
-        const playing = isActive && isPlaying;
-        return (
-          <div
-            key={`${track.id}-${i}`}
-            onClick={() => onPlay(track, tracks, i)}
-            className={`grid grid-cols-[36px_1fr_minmax(120px,1fr)_72px] gap-4 px-4 py-2.5 rounded-md cursor-pointer group transition-colors ${
-              isActive ? "bg-[#ffffff0a]" : "hover:bg-[#ffffff08]"
-            }`}
-          >
-            <div className="flex items-center justify-end">
-              {playing ? (
-                <div className="flex items-center gap-[3px]">
-                  <span className="w-[3px] h-3 bg-[#00FFFF] rounded-full animate-pulse" />
-                  <span
-                    className="w-[3px] h-4 bg-[#00FFFF] rounded-full animate-pulse"
-                    style={{ animationDelay: "0.15s" }}
-                  />
-                  <span
-                    className="w-[3px] h-2.5 bg-[#00FFFF] rounded-full animate-pulse"
-                    style={{ animationDelay: "0.3s" }}
-                  />
-                </div>
-              ) : (
-                <>
-                  <span
-                    className={`text-[15px] tabular-nums group-hover:hidden ${
-                      isActive ? "text-[#00FFFF]" : "text-[#a6a6a6]"
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  <Play
-                    size={14}
-                    fill="white"
-                    className="text-white hidden group-hover:block"
-                  />
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded bg-[#282828] overflow-hidden shrink-0">
-                <TidalImage
-                  src={getTidalImageUrl(track.album?.cover, 80)}
-                  alt={track.title}
-                  className="w-full h-full"
-                />
+    <div
+      className={
+        large
+          ? "grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5"
+          : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5"
+      }
+    >
+      {artists.map((artist) => (
+        <div
+          key={artist.id}
+          onClick={() => onArtistClick(artist)}
+          className="p-3 bg-[#181818] hover:bg-[#282828] rounded-md cursor-pointer group transition-[background-color] duration-300 flex flex-col items-center"
+        >
+          <div className="aspect-square w-full rounded-full mb-3 relative overflow-hidden shadow-lg bg-[#282828]">
+            {artist.picture ? (
+              <TidalImage
+                src={getTidalImageUrl(artist.picture, 320)}
+                alt={artist.name}
+                className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500 ease-out"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <User size={48} className="text-[#535353]" />
               </div>
-              <div className="flex flex-col justify-center min-w-0">
-                <span
-                  className={`text-[15px] font-medium truncate leading-snug ${
-                    isActive ? "text-[#00FFFF]" : "text-white"
-                  }`}
-                >
-                  {track.title}
-                </span>
-                <span className="text-[13px] text-[#a6a6a6] truncate leading-snug">
-                  {track.artist?.name || "Unknown Artist"}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center min-w-0">
-              <span className="text-[14px] text-[#a6a6a6] truncate">
-                {track.album?.title || ""}
-              </span>
-            </div>
-            <div className="flex items-center justify-end text-[14px] text-[#a6a6a6] tabular-nums">
-              {formatDuration(track.duration)}
+            )}
+            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-full" />
+            <div className="absolute bottom-2 right-2 w-10 h-10 bg-[#00FFFF] rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-[opacity,transform] duration-300 scale-90 group-hover:scale-100">
+              <Play size={20} fill="black" className="text-black ml-1" />
             </div>
           </div>
-        );
-      })}
+          <h4 className="font-bold text-[15px] text-white truncate w-full text-center mb-1">
+            {artist.name}
+          </h4>
+          <p className="text-[13px] text-[#a6a6a6]">Artist</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -378,6 +360,7 @@ function AlbumGrid({
   albums,
   onAlbumClick,
   onContextMenu,
+  large = false,
 }: {
   albums: AlbumDetail[];
   onAlbumClick: (
@@ -385,9 +368,16 @@ function AlbumGrid({
     info?: { title: string; cover?: string; artistName?: string }
   ) => void;
   onContextMenu?: (e: React.MouseEvent, album: AlbumDetail) => void;
+  large?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5">
+    <div
+      className={
+        large
+          ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5"
+          : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5"
+      }
+    >
       {albums.map((album) => (
         <div
           key={album.id}
@@ -408,6 +398,17 @@ function AlbumGrid({
               className="w-full h-full transform group-hover:scale-105 transition-transform duration-500 ease-out"
             />
             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            {/* Three-dot button */}
+            <button
+              className="absolute top-2 right-2 w-8 h-8 bg-black/60 rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-black/80 z-10"
+              title="More options"
+              onClick={(e) => {
+                e.stopPropagation();
+                onContextMenu?.(e, album);
+              }}
+            >
+              <MoreHorizontal size={16} className="text-white" />
+            </button>
             <div className="absolute bottom-2 right-2 w-10 h-10 bg-[#00FFFF] rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-[opacity,transform] duration-300 scale-90 group-hover:scale-100">
               <Play size={20} fill="black" className="text-black ml-1" />
             </div>
@@ -431,6 +432,7 @@ function PlaylistGrid({
   playlists,
   onPlaylistClick,
   onContextMenu,
+  large = false,
 }: {
   playlists: Playlist[];
   onPlaylistClick: (
@@ -444,9 +446,16 @@ function PlaylistGrid({
     }
   ) => void;
   onContextMenu?: (e: React.MouseEvent, playlist: Playlist) => void;
+  large?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5">
+    <div
+      className={
+        large
+          ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5"
+          : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5"
+      }
+    >
       {playlists.map((pl) => (
         <div
           key={pl.uuid}
@@ -476,6 +485,17 @@ function PlaylistGrid({
               </div>
             )}
             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            {/* Three-dot button */}
+            <button
+              className="absolute top-2 right-2 w-8 h-8 bg-black/60 rounded-full flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-black/80 z-10"
+              title="More options"
+              onClick={(e) => {
+                e.stopPropagation();
+                onContextMenu?.(e, pl);
+              }}
+            >
+              <MoreHorizontal size={16} className="text-white" />
+            </button>
             <div className="absolute bottom-2 right-2 w-10 h-10 bg-[#00FFFF] rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-[opacity,transform] duration-300 scale-90 group-hover:scale-100">
               <Play size={20} fill="black" className="text-black ml-1" />
             </div>
@@ -483,9 +503,14 @@ function PlaylistGrid({
           <h4 className="font-bold text-[15px] text-white truncate mb-1">
             {pl.title}
           </h4>
-          <p className="text-[13px] text-[#a6a6a6] line-clamp-2">
+          <p className="text-[13px] text-[#a6a6a6] line-clamp-1">
             {pl.description || (pl.creator?.name ? `By ${pl.creator.name}` : pl.creator?.id === 0 ? "By TIDAL" : "Playlist")}
           </p>
+          {pl.numberOfTracks != null && (
+            <p className="text-[12px] text-[#666] mt-0.5">
+              {pl.numberOfTracks} tracks
+            </p>
+          )}
         </div>
       ))}
     </div>

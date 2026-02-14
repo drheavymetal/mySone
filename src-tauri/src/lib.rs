@@ -131,7 +131,11 @@ fn load_saved_auth(state: State<AppState>) -> Result<Option<AuthTokens>, String>
             let mut client = state.tidal_client.lock().map_err(|e| e.to_string())?;
             client.tokens = Some(tokens.clone());
             client.set_credentials(&settings.client_id, &settings.client_secret);
-            println!("DEBUG: Tokens restored to client, user_id: {:?}", tokens.user_id);
+            // Fetch session info to populate country_code for search
+            match client.get_session_info() {
+                Ok(_) => println!("DEBUG: Tokens restored, country_code: {}", client.country_code),
+                Err(e) => println!("DEBUG: Tokens restored but session info failed (will use default country_code): {}", e),
+            }
             return Ok(Some(tokens));
         }
     } else {
@@ -439,7 +443,7 @@ fn logout(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn get_session_user_id(state: State<AppState>) -> Result<u64, String> {
-    let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
+    let mut client = state.tidal_client.lock().map_err(|e| e.to_string())?;
     client.get_session_info()
 }
 
@@ -611,6 +615,12 @@ fn get_stream_url(state: State<AppState>, track_id: u64, quality: String) -> Res
 fn search_tidal(state: State<AppState>, query: String, limit: u32) -> Result<TidalSearchResults, String> {
     let client = state.tidal_client.lock().map_err(|e| e.to_string())?;
     client.search(&query, limit)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn search_suggestions(state: State<AppState>, query: String, limit: u32) -> Vec<String> {
+    let client = state.tidal_client.lock().unwrap();
+    client.search_suggestions(&query, limit)
 }
 
 // ==================== Home Page & Pages API ====================
@@ -982,6 +992,7 @@ pub fn run() {
             get_album_tracks,
             get_stream_url,
             search_tidal,
+            search_suggestions,
             get_track_lyrics,
             get_track_credits,
             get_track_radio,

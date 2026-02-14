@@ -1,17 +1,48 @@
-import { ChevronLeft, ChevronRight, Search, X, Loader2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  X,
+  Loader2,
+  MoreHorizontal,
+  Clock,
+} from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type SearchResults } from "../hooks/useAudio";
+import { getTidalImageUrl, type SearchResults, type Track } from "../hooks/useAudio";
 import TidalImage from "./TidalImage";
+import TrackContextMenu from "./TrackContextMenu";
 import UserMenu from "./UserMenu";
+
+const HISTORY_KEY = "tide-vibe-search-history";
+const MAX_HISTORY = 10;
+
+function loadHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((s) => typeof s === "string").slice(0, MAX_HISTORY);
+    }
+  } catch {}
+  return [];
+}
+
+function saveHistory(history: string[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  } catch {}
+}
 
 export default function Header() {
   const {
     playTrack,
     setQueueTracks,
     navigateToAlbum,
+    navigateToArtist,
     navigateToSearch,
     searchTidal,
+    searchSuggestions,
     currentView,
   } = useAudioContext();
 
@@ -19,11 +50,18 @@ export default function Header() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickResults, setQuickResults] = useState<SearchResults | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchHistory, setSearchHistory] = useState<string[]>(loadHistory);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined
-  );
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Track context menu state
+  const [ctxTrack, setCtxTrack] = useState<Track | null>(null);
+  const [ctxTrackIndex, setCtxTrackIndex] = useState(0);
+  const [ctxPos, setCtxPos] = useState<{ x: number; y: number } | undefined>(undefined);
+  const dotsRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
 
   // Sync search query with current view if it's a search view
   useEffect(() => {
@@ -36,9 +74,11 @@ export default function Header() {
   const doQuickSearch = useCallback(
     (query: string) => {
       clearTimeout(debounceRef.current);
+      clearTimeout(suggestDebounceRef.current);
       if (!query.trim()) {
         setQuickResults(null);
         setSearching(false);
+        setSuggestions([]);
         return;
       }
       setSearching(true);
@@ -54,9 +94,34 @@ export default function Header() {
             setSearching(false);
           });
       }, 300);
+      // Fetch search suggestions with shorter debounce
+      suggestDebounceRef.current = setTimeout(() => {
+        searchSuggestions(query.trim(), 5)
+          .then((s) => setSuggestions(s))
+          .catch(() => setSuggestions([]));
+      }, 200);
     },
-    [searchTidal]
+    [searchTidal, searchSuggestions]
   );
+
+  const addToHistory = useCallback((query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setSearchHistory((prev) => {
+      const filtered = prev.filter((h) => h.toLowerCase() !== trimmed.toLowerCase());
+      const next = [trimmed, ...filtered].slice(0, MAX_HISTORY);
+      saveHistory(next);
+      return next;
+    });
+  }, []);
+
+  const removeFromHistory = useCallback((query: string) => {
+    setSearchHistory((prev) => {
+      const next = prev.filter((h) => h !== query);
+      saveHistory(next);
+      return next;
+    });
+  }, []);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -68,6 +133,7 @@ export default function Header() {
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && searchQuery.trim()) {
       setSearchOpen(false);
+      addToHistory(searchQuery.trim());
       navigateToSearch(searchQuery.trim());
     } else if (e.key === "Escape") {
       setSearchOpen(false);
@@ -79,6 +145,7 @@ export default function Header() {
     setSearchQuery("");
     setSearchOpen(false);
     setQuickResults(null);
+    setSuggestions([]);
     searchInputRef.current?.focus();
   };
 
@@ -110,6 +177,19 @@ export default function Header() {
     }
     return "";
   };
+
+  // History suggestions: filter by typed prefix
+  const matchingHistory = searchQuery.trim()
+    ? searchHistory.filter(
+        (h) =>
+          h.toLowerCase().includes(searchQuery.trim().toLowerCase()) &&
+          h.toLowerCase() !== searchQuery.trim().toLowerCase()
+      )
+    : searchHistory;
+
+  const showHistorySection = searchOpen && matchingHistory.length > 0;
+  const showSuggestions = searchOpen && searchQuery.trim() && suggestions.length > 0;
+  const showResultsSection = searchOpen && searchQuery.trim() && (searching || hasResults || quickResults);
 
   return (
     <div className="h-16 flex items-center justify-between px-6 bg-[#121212] z-30 shrink-0 sticky top-0">
@@ -149,9 +229,7 @@ export default function Header() {
               value={searchQuery}
               onChange={handleSearchChange}
               onKeyDown={handleSearchKeyDown}
-              onFocus={() => {
-                if (searchQuery.trim()) setSearchOpen(true);
-              }}
+              onFocus={() => setSearchOpen(true)}
               placeholder="Search"
               className="bg-transparent text-sm text-white placeholder-[#808080] outline-none flex-1 min-w-0"
             />
@@ -166,118 +244,261 @@ export default function Header() {
           </div>
 
           {/* Search Dropdown */}
-          {searchOpen && searchQuery.trim() && (
+          {searchOpen && (showHistorySection || showSuggestions || showResultsSection) && (
             <div
               ref={dropdownRef}
-              className="absolute right-0 top-full mt-2 w-[360px] bg-[#1a1a1a] rounded-lg shadow-2xl shadow-black/60 border border-white/8 z-50 max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent"
+              className="absolute right-0 top-full mt-2 w-[420px] bg-[#1a1a1a] rounded-lg shadow-2xl shadow-black/60 border border-white/8 z-50 max-h-[70vh] overflow-y-auto scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent"
             >
-              {searching && !hasResults && (
-                <div className="flex items-center justify-center py-6">
-                  <Loader2 size={18} className="animate-spin text-[#00FFFF]" />
-                </div>
-              )}
-
-              {!searching && !hasResults && quickResults && (
-                <div className="py-6 text-center text-[13px] text-[#666]">
-                  No results found
-                </div>
-              )}
-
-              {hasResults && (
+              {/* Server-side search suggestions */}
+              {showSuggestions && (
                 <div className="py-1">
-                  {/* Tracks */}
-                  {quickResults!.tracks.map((track) => (
+                  {suggestions.map((s, i) => (
                     <button
-                      key={`t-${track.id}`}
+                      key={`sug-${i}`}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/6 transition-colors text-left"
                       onClick={() => {
+                        setSearchQuery(s);
+                        setSuggestions([]);
                         setSearchOpen(false);
-                        setQueueTracks([]);
-                        playTrack(track);
+                        addToHistory(s);
+                        navigateToSearch(s);
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/6 transition-colors text-left"
                     >
-                      <div className="w-9 h-9 rounded bg-[#282828] overflow-hidden shrink-0">
-                        <TidalImage
-                          src={getTidalImageUrl(track.album?.cover, 80)}
-                          alt={track.title}
-                          className="w-full h-full"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] text-white truncate">
-                          {track.title}
-                        </p>
-                        <p className="text-[11px] text-[#808080] truncate">
-                          Track &middot;{" "}
-                          {track.artist?.name || "Unknown Artist"}
-                        </p>
-                      </div>
+                      <Search size={15} className="text-[#666] shrink-0" />
+                      <span className="text-[13px] text-white truncate">{s}</span>
                     </button>
                   ))}
+                  {(showHistorySection || showResultsSection) && (
+                    <div className="border-b border-white/6 mx-3" />
+                  )}
+                </div>
+              )}
 
-                  {/* Albums */}
-                  {quickResults!.albums.map((album) => (
-                    <button
-                      key={`a-${album.id}`}
-                      onClick={() => {
-                        setSearchOpen(false);
-                        navigateToAlbum(album.id, {
-                          title: album.title,
-                          cover: album.cover,
-                          artistName: album.artist?.name,
-                        });
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/6 transition-colors text-left"
-                    >
-                      <div className="w-9 h-9 rounded bg-[#282828] overflow-hidden shrink-0">
-                        <TidalImage
-                          src={getTidalImageUrl(album.cover, 80)}
-                          alt={album.title}
-                          className="w-full h-full"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] text-white truncate">
-                          {album.title}
-                        </p>
-                        <p className="text-[11px] text-[#808080] truncate">
-                          Album &middot; {album.artist?.name || "Unknown"}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-
-                  {/* Artists */}
-                  {quickResults!.artists.map((artist) => (
+              {/* Search History */}
+              {showHistorySection && (
+                <div className="py-1">
+                  {!searchQuery.trim() && (
+                    <div className="px-3 pt-2 pb-1 text-[11px] text-[#666] uppercase tracking-wider font-medium">
+                      Recent searches
+                    </div>
+                  )}
+                  {matchingHistory.slice(0, 5).map((item) => (
                     <div
-                      key={`ar-${artist.id}`}
-                      className="flex items-center gap-3 px-3 py-2 text-left"
+                      key={item}
+                      className="flex items-center gap-3 px-3 py-3 hover:bg-white/6 transition-colors cursor-pointer"
                     >
-                      <div className="w-9 h-9 rounded-full bg-[#282828] overflow-hidden shrink-0 flex items-center justify-center">
-                        <span className="text-[12px] font-bold text-[#666]">
-                          {artist.name.charAt(0)}
-                        </span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] text-white truncate">
-                          {artist.name}
-                        </p>
-                        <p className="text-[11px] text-[#808080]">Artist</p>
-                      </div>
+                      <Clock size={15} className="text-[#666] shrink-0" />
+                      <button
+                        className="flex-1 text-left text-[13px] text-white truncate"
+                        onClick={() => {
+                          setSearchQuery(item);
+                          setSearchOpen(false);
+                          addToHistory(item);
+                          navigateToSearch(item);
+                        }}
+                      >
+                        {item}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFromHistory(item);
+                        }}
+                        className="text-[#666] hover:text-white shrink-0 p-0.5"
+                        title="Remove"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   ))}
-
-                  {/* View all */}
-                  <button
-                    onClick={() => {
-                      setSearchOpen(false);
-                      navigateToSearch(searchQuery.trim());
-                    }}
-                    className="w-full py-2.5 text-center text-[12px] font-semibold text-[#00FFFF] hover:bg-white/4 border-t border-white/6 transition-colors"
-                  >
-                    View all results
-                  </button>
+                  {showResultsSection && (
+                    <div className="border-b border-white/6 mx-3" />
+                  )}
                 </div>
+              )}
+
+              {/* Quick Results */}
+              {showResultsSection && (
+                <>
+                  {searching && !hasResults && (
+                    <div className="flex items-center justify-center py-6">
+                      <Loader2 size={18} className="animate-spin text-[#00FFFF]" />
+                    </div>
+                  )}
+
+                  {!searching && !hasResults && quickResults && (
+                    <div className="py-6 text-center text-[13px] text-[#666]">
+                      No results found
+                    </div>
+                  )}
+
+                  {hasResults && (
+                    <div className="py-1">
+                      {/* Render sections ordered by topHitType for relevance */}
+                      {(() => {
+                        const topHit = quickResults!.topHitType?.toUpperCase();
+                        type SectionType = "tracks" | "albums" | "artists";
+                        const defaultOrder: SectionType[] = ["tracks", "albums", "artists"];
+                        const order = topHit === "ARTISTS"
+                          ? (["artists", "tracks", "albums"] as SectionType[])
+                          : topHit === "ALBUMS"
+                            ? (["albums", "tracks", "artists"] as SectionType[])
+                            : defaultOrder;
+
+                        return order.map((section) => {
+                          if (section === "tracks" && quickResults!.tracks.length > 0) {
+                            return quickResults!.tracks.map((track, idx) => (
+                              <div
+                                key={`t-${track.id}`}
+                                className="flex items-center gap-3 px-3 py-3 hover:bg-white/6 transition-colors text-left group/track"
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setCtxPos({ x: e.clientX, y: e.clientY });
+                                  setCtxTrackIndex(idx);
+                                  setCtxTrack(track);
+                                }}
+                              >
+                                <button
+                                  className="flex-1 flex items-center gap-3 min-w-0"
+                                  onClick={() => {
+                                    setSearchOpen(false);
+                                    setQueueTracks([]);
+                                    playTrack(track);
+                                  }}
+                                >
+                                  <div className="w-12 h-12 rounded bg-[#282828] overflow-hidden shrink-0">
+                                    <TidalImage
+                                      src={getTidalImageUrl(track.album?.cover, 80)}
+                                      alt={track.title}
+                                      className="w-full h-full"
+                                    />
+                                  </div>
+                                  <div className="flex-1 min-w-0 text-left">
+                                    <p className="text-[14px] text-white truncate">
+                                      {track.title}
+                                    </p>
+                                    <p className="text-[11px] text-[#808080] truncate">
+                                      Track &middot;{" "}
+                                      {track.artist?.name || "Unknown Artist"}
+                                    </p>
+                                  </div>
+                                </button>
+                                <button
+                                  ref={(el) => {
+                                    if (el) dotsRefs.current.set(track.id, el);
+                                    else dotsRefs.current.delete(track.id);
+                                  }}
+                                  className="p-1 rounded-full text-[#666] hover:text-white opacity-0 group-hover/track:opacity-100 transition-opacity shrink-0"
+                                  title="More options"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCtxPos(undefined);
+                                    setCtxTrackIndex(idx);
+                                    setCtxTrack((prev) => (prev?.id === track.id ? null : track));
+                                  }}
+                                >
+                                  <MoreHorizontal size={16} />
+                                </button>
+                                {ctxTrack?.id === track.id && (
+                                  <TrackContextMenu
+                                    track={track}
+                                    index={ctxTrackIndex}
+                                    anchorRef={{ current: dotsRefs.current.get(track.id) ?? null }}
+                                    cursorPosition={ctxPos}
+                                    onClose={() => setCtxTrack(null)}
+                                  />
+                                )}
+                              </div>
+                            ));
+                          }
+                          if (section === "albums" && quickResults!.albums.length > 0) {
+                            return quickResults!.albums.map((album) => (
+                              <button
+                                key={`a-${album.id}`}
+                                onClick={() => {
+                                  setSearchOpen(false);
+                                  navigateToAlbum(album.id, {
+                                    title: album.title,
+                                    cover: album.cover,
+                                    artistName: album.artist?.name,
+                                  });
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-white/6 transition-colors text-left"
+                              >
+                                <div className="w-12 h-12 rounded bg-[#282828] overflow-hidden shrink-0">
+                                  <TidalImage
+                                    src={getTidalImageUrl(album.cover, 80)}
+                                    alt={album.title}
+                                    className="w-full h-full"
+                                  />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[14px] text-white truncate">
+                                    {album.title}
+                                  </p>
+                                  <p className="text-[11px] text-[#808080] truncate">
+                                    Album &middot; {album.artist?.name || "Unknown"}
+                                  </p>
+                                </div>
+                              </button>
+                            ));
+                          }
+                          if (section === "artists" && quickResults!.artists.length > 0) {
+                            return quickResults!.artists.map((artist) => (
+                              <button
+                                key={`ar-${artist.id}`}
+                                onClick={() => {
+                                  setSearchOpen(false);
+                                  navigateToArtist(artist.id, {
+                                    name: artist.name,
+                                    picture: artist.picture,
+                                  });
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-white/6 transition-colors text-left"
+                              >
+                                <div className="w-12 h-12 rounded-full bg-[#282828] overflow-hidden shrink-0">
+                                  {artist.picture ? (
+                                    <TidalImage
+                                      src={getTidalImageUrl(artist.picture, 80)}
+                                      alt={artist.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center">
+                                      <span className="text-[12px] font-bold text-[#666]">
+                                        {artist.name.charAt(0)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[14px] text-white truncate">
+                                    {artist.name}
+                                  </p>
+                                  <p className="text-[11px] text-[#808080]">Artist</p>
+                                </div>
+                              </button>
+                            ));
+                          }
+                          return null;
+                        });
+                      })()}
+
+                      {/* View all */}
+                      <button
+                        onClick={() => {
+                          setSearchOpen(false);
+                          addToHistory(searchQuery.trim());
+                          navigateToSearch(searchQuery.trim());
+                        }}
+                        className="w-full py-2.5 text-center text-[12px] font-semibold text-[#00FFFF] hover:bg-white/4 border-t border-white/6 transition-colors"
+                      >
+                        View all results
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

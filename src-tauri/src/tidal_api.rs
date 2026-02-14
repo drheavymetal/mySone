@@ -5,6 +5,7 @@ use std::time::Duration;
 
 const TIDAL_AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
 const TIDAL_API_URL: &str = "https://api.tidal.com/v1";
+const TIDAL_API_V2_URL: &str = "https://api.tidal.com/v2";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthTokens {
@@ -24,6 +25,9 @@ pub struct TidalTrack {
     pub duration: u32,
     #[serde(default)]
     pub artist: Option<TidalArtist>,
+    /// Some endpoints return `artists` (plural array) instead of / in addition to `artist`.
+    #[serde(default, skip_serializing)]
+    artists: Option<Vec<TidalArtist>>,
     #[serde(default)]
     pub album: Option<TidalAlbum>,
     #[serde(default)]
@@ -32,6 +36,19 @@ pub struct TidalTrack {
     pub track_number: Option<u32>,
     #[serde(default)]
     pub date_added: Option<String>,
+}
+
+impl TidalTrack {
+    /// If `artist` is None but `artists` has entries, fill from the first element.
+    pub fn backfill_artist(&mut self) {
+        if self.artist.is_none() {
+            if let Some(ref artists) = self.artists {
+                if let Some(first) = artists.first() {
+                    self.artist = Some(first.clone());
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -64,6 +81,8 @@ pub struct PaginatedTracks {
 pub struct TidalArtist {
     pub id: u64,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -230,6 +249,9 @@ pub struct TidalClient {
     pub tokens: Option<AuthTokens>,
     pub client_id: String,
     pub client_secret: String,
+    /// The user's country code from their Tidal session (e.g. "US", "GB", "DE").
+    /// Populated after authentication via get_session_info().
+    pub country_code: String,
 }
 
 impl TidalClient {
@@ -242,6 +264,7 @@ impl TidalClient {
             tokens: None,
             client_id: String::new(),
             client_secret: String::new(),
+            country_code: "US".to_string(),
         }
     }
 
@@ -442,7 +465,7 @@ impl TidalClient {
             .client
             .get(format!("{}/users/{}", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to get user profile: {}", e))?;
 
@@ -475,7 +498,7 @@ impl TidalClient {
         Ok((name, username))
     }
 
-    pub fn get_session_info(&self) -> Result<u64, String> {
+    pub fn get_session_info(&mut self) -> Result<u64, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -493,11 +516,20 @@ impl TidalClient {
         #[serde(rename_all = "camelCase")]
         struct SessionResponse {
             user_id: u64,
+            #[serde(default)]
+            country_code: Option<String>,
         }
 
         let data = response
             .json::<SessionResponse>()
             .map_err(|e| format!("Failed to parse session: {}", e))?;
+
+        // Store the user's country code for all subsequent API calls
+        if let Some(cc) = data.country_code {
+            if !cc.is_empty() {
+                self.country_code = cc;
+            }
+        }
 
         Ok(data.user_id)
     }
@@ -509,7 +541,7 @@ impl TidalClient {
             .client
             .get(format!("{}/users/{}/playlists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US"), ("limit", "50")])
+            .query(&[("countryCode", self.country_code.as_str()), ("limit", "50")])
             .send()
             .map_err(|e| format!("Failed to fetch playlists: {}", e))?;
 
@@ -541,7 +573,7 @@ impl TidalClient {
             .client
             .post(format!("{}/users/{}/playlists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("title", title), ("description", description)])
             .send()
             .map_err(|e| format!("Failed to create playlist: {}", e))?;
@@ -567,7 +599,7 @@ impl TidalClient {
             .client
             .get(format!("{}/playlists/{}", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
@@ -584,7 +616,7 @@ impl TidalClient {
             .post(format!("{}/playlists/{}/items", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .header("If-None-Match", &etag)
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[
                 ("trackIds", &track_id.to_string()),
                 ("onDupes", &"FAIL".to_string()),
@@ -610,7 +642,7 @@ impl TidalClient {
             .client
             .get(format!("{}/playlists/{}", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
@@ -627,7 +659,7 @@ impl TidalClient {
             .delete(format!("{}/playlists/{}/items/{}", TIDAL_API_URL, playlist_id, index))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .header("If-None-Match", &etag)
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to remove track from playlist: {}", e))?;
 
@@ -648,7 +680,7 @@ impl TidalClient {
             .client
             .get(format!("{}/users/{}/favorites/playlists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US"), ("limit", "50")])
+            .query(&[("countryCode", self.country_code.as_str()), ("limit", "50")])
             .send()
             .map_err(|e| format!("Failed to fetch favorite playlists: {}", e))?;
 
@@ -684,7 +716,7 @@ impl TidalClient {
             .client
             .get(format!("{}/playlists/{}/tracks", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US"), ("limit", "100")])
+            .query(&[("countryCode", self.country_code.as_str()), ("limit", "100")])
             .send()
             .map_err(|e| format!("Failed to fetch tracks: {}", e))?;
 
@@ -700,9 +732,10 @@ impl TidalClient {
             items: Vec<TidalTrack>,
         }
 
-        let data = serde_json::from_str::<TracksResponse>(&body)
+        let mut data = serde_json::from_str::<TracksResponse>(&body)
             .map_err(|e| format!("Failed to parse tracks: {} - Body: {}", e, body))?;
 
+        for t in &mut data.items { t.backfill_artist(); }
         Ok(data.items)
     }
 
@@ -713,7 +746,7 @@ impl TidalClient {
             .client
             .get(format!("{}/albums/{}", TIDAL_API_URL, album_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch album: {}", e))?;
 
@@ -736,7 +769,7 @@ impl TidalClient {
             .get(format!("{}/albums/{}/tracks", TIDAL_API_URL, album_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", &offset.to_string()),
             ])
@@ -761,9 +794,10 @@ impl TidalClient {
             limit: u32,
         }
 
-        let data = serde_json::from_str::<AlbumTracksResponse>(&body)
+        let mut data = serde_json::from_str::<AlbumTracksResponse>(&body)
             .map_err(|e| format!("Failed to parse album tracks: {} - Body: {}", e, body))?;
 
+        for t in &mut data.items { t.backfill_artist(); }
         Ok(PaginatedTracks {
             items: data.items,
             total_number_of_items: data.total_number_of_items,
@@ -780,7 +814,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", &offset.to_string()),
                 ("order", "DATE"),
@@ -819,6 +853,7 @@ impl TidalClient {
         Ok(PaginatedTracks {
             items: data.items.into_iter().map(|f| {
                 let mut t = f.item;
+                t.backfill_artist();
                 t.date_added = Some(f.created);
                 t
             }).collect(),
@@ -835,7 +870,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", "2000"),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -885,7 +920,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", "2000"),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -926,7 +961,7 @@ impl TidalClient {
             .client
             .post(format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("trackId", track_id_str.as_str())])
             .send()
             .map_err(|e| format!("Failed to favorite track: {}", e))?;
@@ -951,7 +986,7 @@ impl TidalClient {
                 TIDAL_API_URL, user_id, track_id
             ))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to remove favorite track: {}", e))?;
 
@@ -972,7 +1007,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/albums", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", "2000"),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -1023,7 +1058,7 @@ impl TidalClient {
             .client
             .post(format!("{}/users/{}/favorites/albums", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("albumId", album_id_str.as_str())])
             .send()
             .map_err(|e| format!("Failed to favorite album: {}", e))?;
@@ -1048,7 +1083,7 @@ impl TidalClient {
                 TIDAL_API_URL, user_id, album_id
             ))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to remove favorite album: {}", e))?;
 
@@ -1069,7 +1104,7 @@ impl TidalClient {
             .client
             .post(format!("{}/users/{}/favorites/playlists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("uuid", playlist_uuid)])
             .send()
             .map_err(|e| format!("Failed to favorite playlist: {}", e))?;
@@ -1094,7 +1129,7 @@ impl TidalClient {
                 TIDAL_API_URL, user_id, playlist_uuid
             ))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to remove favorite playlist: {}", e))?;
 
@@ -1116,7 +1151,7 @@ impl TidalClient {
             .client
             .get(format!("{}/playlists/{}", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
@@ -1134,7 +1169,7 @@ impl TidalClient {
             .post(format!("{}/playlists/{}/items", TIDAL_API_URL, playlist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .header("If-None-Match", &etag)
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .form(&[
                 ("trackIds", ids_str.as_str()),
                 ("onDupes", "SKIP"),
@@ -1163,7 +1198,7 @@ impl TidalClient {
             ))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("audioquality", quality),
                 ("playbackmode", "STREAM"),
                 ("assetpresentation", "FULL"),
@@ -1284,7 +1319,7 @@ impl TidalClient {
             .client
             .get(format!("{}/tracks/{}/lyrics", TIDAL_API_URL, track_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch lyrics: {}", e))?;
 
@@ -1306,7 +1341,7 @@ impl TidalClient {
             .client
             .get(format!("{}/tracks/{}/credits", TIDAL_API_URL, track_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch credits: {}", e))?;
 
@@ -1329,7 +1364,7 @@ impl TidalClient {
             .get(format!("{}/tracks/{}/radio", TIDAL_API_URL, track_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
             ])
             .send()
@@ -1348,7 +1383,8 @@ impl TidalClient {
             items: Vec<TidalTrack>,
         }
 
-        if let Ok(data) = serde_json::from_str::<RadioResponse>(&body) {
+        if let Ok(mut data) = serde_json::from_str::<RadioResponse>(&body) {
+            for t in &mut data.items { t.backfill_artist(); }
             return Ok(data.items);
         }
 
@@ -1360,68 +1396,216 @@ impl TidalClient {
     pub fn search(&self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
-        let response = self
-            .client
+        // Try the v2 API first (web app uses this, returns playlists properly)
+        if let Ok(v2) = self.search_v2(query, limit, tokens) {
+            return Ok(v2);
+        }
+
+        // Fallback to v1 API
+        self.search_v1(query, limit, tokens)
+    }
+
+    fn search_v2(&self, query: &str, limit: u32, tokens: &AuthTokens) -> Result<TidalSearchResults, String> {
+        let limit_str = limit.to_string();
+        let url = format!("{}/search/", TIDAL_API_V2_URL);
+        let resp = self.client.get(&url)
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[
+                ("query", query),
+                ("countryCode", self.country_code.as_str()),
+                ("limit", limit_str.as_str()),
+                ("types", "ARTISTS,ALBUMS,TRACKS,PLAYLISTS"),
+                ("includeContributors", "true"),
+                ("includeUserPlaylists", "true"),
+                ("includeDidYouMean", "true"),
+                ("supportsUserData", "true"),
+                ("locale", "en_US"),
+                ("deviceType", "BROWSER"),
+            ])
+            .send()
+            .map_err(|e| format!("v2 search request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("v2 search HTTP {}", resp.status()));
+        }
+
+        let body = resp.text().unwrap_or_default();
+        self.parse_search_response(&body, query, "v2")
+    }
+
+    fn search_v1(&self, query: &str, limit: u32, tokens: &AuthTokens) -> Result<TidalSearchResults, String> {
+        let limit_str = limit.to_string();
+        let resp = self.client
             .get(format!("{}/search", TIDAL_API_URL))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
                 ("query", query),
-                ("countryCode", "US"),
-                ("limit", &limit.to_string()),
+                ("countryCode", self.country_code.as_str()),
+                ("limit", limit_str.as_str()),
                 ("offset", "0"),
                 ("types", "ARTISTS,ALBUMS,TRACKS,PLAYLISTS"),
+                ("includeContributors", "true"),
+                ("includeUserPlaylists", "true"),
+                ("supportsUserData", "true"),
             ])
             .send()
             .map_err(|e| format!("Failed to search: {}", e))?;
 
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
         if !status.is_success() {
             return Err(format!("Search failed ({}): {}", status, body));
         }
+        self.parse_search_response(&body, query, "v1")
+    }
+
+    fn parse_search_response(&self, body: &str, query: &str, tag: &str) -> Result<TidalSearchResults, String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Sec<T> { items: Vec<T> }
 
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct SearchSection<T> {
-            items: Vec<T>,
-        }
-
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct TopHit {
+        struct TH {
             #[serde(rename = "type")]
             hit_type: Option<String>,
         }
 
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct SearchResponse {
-            #[serde(default)]
-            artists: Option<SearchSection<TidalArtist>>,
-            #[serde(default)]
-            albums: Option<SearchSection<TidalAlbumDetail>>,
-            #[serde(default)]
-            tracks: Option<SearchSection<TidalTrack>>,
-            #[serde(default)]
-            playlists: Option<SearchSection<TidalPlaylistRaw>>,
-            #[serde(default)]
-            top_hit: Option<TopHit>,
+        struct SR {
+            #[serde(default)] artists: Option<Sec<TidalArtist>>,
+            #[serde(default)] albums: Option<Sec<TidalAlbumDetail>>,
+            #[serde(default)] tracks: Option<Sec<TidalTrack>>,
+            #[serde(default)] playlists: Option<Sec<TidalPlaylistRaw>>,
+            #[serde(default)] top_hit: Option<TH>,
         }
 
-        let data = serde_json::from_str::<SearchResponse>(&body)
-            .map_err(|e| format!("Failed to parse search results: {} - Body: {}", e, body))?;
+        let data: SR = serde_json::from_str(body)
+            .map_err(|e| format!("Failed to parse search ({}): {}", tag, e))?;
+
+        eprintln!("DEBUG search [{}]: t={} al={} ar={} pl={} for '{}'", tag,
+            data.tracks.as_ref().map(|s| s.items.len()).unwrap_or(0),
+            data.albums.as_ref().map(|s| s.items.len()).unwrap_or(0),
+            data.artists.as_ref().map(|s| s.items.len()).unwrap_or(0),
+            data.playlists.as_ref().map(|s| s.items.len()).unwrap_or(0),
+            query);
+
+        let mut tracks = data.tracks.map(|s| s.items).unwrap_or_default();
+        for t in &mut tracks { t.backfill_artist(); }
 
         Ok(TidalSearchResults {
             artists: data.artists.map(|s| s.items).unwrap_or_default(),
             albums: data.albums.map(|s| s.items).unwrap_or_default(),
-            tracks: data.tracks.map(|s| s.items).unwrap_or_default(),
-            playlists: data
-                .playlists
+            tracks,
+            playlists: data.playlists
                 .map(|s| s.items.into_iter().map(|p| p.into()).collect())
                 .unwrap_or_default(),
             top_hit_type: data.top_hit.and_then(|h| h.hit_type),
         })
+    }
+
+    /// Fetch autocomplete search suggestions from Tidal.
+    /// Tries /search/top-hits first, then falls back to extracting from /search.
+    /// Returns a list of suggestion strings.
+    pub fn search_suggestions(&self, query: &str, limit: u32) -> Vec<String> {
+        let tokens = match self.tokens.as_ref() {
+            Some(t) => t,
+            None => return vec![],
+        };
+
+        // Helper: extract items from a Tidal search-style section
+        // Tidal wraps categories as { "artists": { "items": [...] }, "tracks": { "items": [...] } }
+        fn extract_names(json: &serde_json::Value, section: &str, field: &str) -> Vec<String> {
+            json.get(section)
+                .and_then(|v| {
+                    // Try { items: [...] } wrapper first, then flat array
+                    v.get("items").and_then(|i| i.as_array()).or_else(|| v.as_array())
+                })
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|item| item.get(field).and_then(|v| v.as_str()).map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        // Try /search/top-hits first
+        let response = self
+            .client
+            .get(format!("{}/search/top-hits", TIDAL_API_URL))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[
+                ("query", query),
+                ("countryCode", self.country_code.as_str()),
+                ("limit", &limit.to_string()),
+            ])
+            .send();
+
+        if let Ok(resp) = response {
+            if resp.status().is_success() {
+                let body = resp.text().unwrap_or_default();
+                eprintln!("DEBUG search_suggestions top-hits response (first 500 chars): {}", &body[..body.len().min(500)]);
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    let mut suggestions: Vec<String> = Vec::new();
+
+                    // Format: { "suggestions": ["str1", "str2"] }
+                    if let Some(arr) = json.get("suggestions").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                suggestions.push(s.to_string());
+                            }
+                        }
+                    }
+
+                    // Try extracting from wrapped items if no direct suggestions
+                    if suggestions.is_empty() {
+                        suggestions.extend(extract_names(&json, "artists", "name"));
+                        suggestions.extend(extract_names(&json, "tracks", "title"));
+                        suggestions.extend(extract_names(&json, "albums", "title"));
+                        suggestions.extend(extract_names(&json, "playlists", "title"));
+                    }
+
+                    if !suggestions.is_empty() {
+                        suggestions.truncate(limit as usize);
+                        return suggestions;
+                    }
+                }
+            } else {
+                eprintln!("DEBUG search_suggestions top-hits failed: {}", resp.status());
+            }
+        }
+
+        // Fallback: use the regular /search endpoint and extract top names as suggestions
+        let response = self
+            .client
+            .get(format!("{}/search", TIDAL_API_URL))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[
+                ("query", query),
+                ("countryCode", self.country_code.as_str()),
+                ("limit", &limit.to_string()),
+                ("offset", "0"),
+                ("types", "ARTISTS,ALBUMS,TRACKS,PLAYLISTS"),
+            ])
+            .send();
+
+        if let Ok(resp) = response {
+            if resp.status().is_success() {
+                let body = resp.text().unwrap_or_default();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    let mut suggestions: Vec<String> = Vec::new();
+                    suggestions.extend(extract_names(&json, "artists", "name"));
+                    suggestions.extend(extract_names(&json, "tracks", "title"));
+                    suggestions.extend(extract_names(&json, "albums", "title"));
+                    suggestions.extend(extract_names(&json, "playlists", "title"));
+                    suggestions.truncate(limit as usize);
+                    return suggestions;
+                }
+            }
+        }
+
+        vec![]
     }
 
     // ==================== Home Page (Pages API) ====================
@@ -1435,7 +1619,7 @@ impl TidalClient {
             .get(format!("{}/{}", TIDAL_API_URL, endpoint))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("deviceType", "BROWSER"),
                 ("locale", "en_US"),
             ])
@@ -1995,7 +2179,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/artists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -2036,7 +2220,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/albums", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -2076,7 +2260,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/playlists", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -2114,7 +2298,7 @@ impl TidalClient {
             .get(format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", "12"),
                 ("offset", "0"),
                 ("order", "DATE"),
@@ -2155,7 +2339,7 @@ impl TidalClient {
             .client
             .get(format!("{}/artists/{}", TIDAL_API_URL, artist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch artist detail: {}", e))?;
 
@@ -2181,7 +2365,7 @@ impl TidalClient {
             .client
             .get(format!("{}/mixes/{}/items", TIDAL_API_URL, mix_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch mix items: {}", e))?;
 
@@ -2220,7 +2404,7 @@ impl TidalClient {
             .get(format!("{}/artists/{}/toptracks", TIDAL_API_URL, artist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", "0"),
             ])
@@ -2240,9 +2424,10 @@ impl TidalClient {
             items: Vec<TidalTrack>,
         }
 
-        let data = serde_json::from_str::<ArtistTracksResponse>(&body)
+        let mut data = serde_json::from_str::<ArtistTracksResponse>(&body)
             .map_err(|e| format!("Failed to parse artist top tracks: {} - Body: {}", e, &body[..body.len().min(500)]))?;
 
+        for t in &mut data.items { t.backfill_artist(); }
         Ok(data.items)
     }
 
@@ -2255,7 +2440,7 @@ impl TidalClient {
             .get(format!("{}/artists/{}/albums", TIDAL_API_URL, artist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[
-                ("countryCode", "US"),
+                ("countryCode", self.country_code.as_str()),
                 ("limit", &limit.to_string()),
                 ("offset", "0"),
             ])
@@ -2289,7 +2474,7 @@ impl TidalClient {
             .client
             .get(format!("{}/artists/{}/bio", TIDAL_API_URL, artist_id))
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US")])
+            .query(&[("countryCode", self.country_code.as_str())])
             .send()
             .map_err(|e| format!("Failed to fetch artist bio: {}", e))?;
 
@@ -2317,7 +2502,7 @@ impl TidalClient {
             .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", tokens.access_token))
-            .query(&[("countryCode", "US"), ("deviceType", "BROWSER")])
+            .query(&[("countryCode", self.country_code.as_str()), ("deviceType", "BROWSER")])
             .send()
             .map_err(|e| format!("Failed to fetch page: {}", e))?;
 

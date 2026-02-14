@@ -23,7 +23,7 @@ export function getTidalImageUrl(
 export interface Track {
   id: number;
   title: string;
-  artist?: { id: number; name: string };
+  artist?: { id: number; name: string; picture?: string };
   album?: { id: number; title: string; cover?: string };
   duration: number;
   audioQuality?: string;
@@ -35,7 +35,7 @@ export interface AlbumDetail {
   id: number;
   title: string;
   cover?: string;
-  artist?: { id: number; name: string };
+  artist?: { id: number; name: string; picture?: string };
   numberOfTracks?: number;
   duration?: number;
   releaseDate?: string;
@@ -91,7 +91,7 @@ export type AppView =
     };
 
 export interface SearchResults {
-  artists: { id: number; name: string }[];
+  artists: { id: number; name: string; picture?: string }[];
   albums: AlbumDetail[];
   tracks: Track[];
   playlists: Playlist[];
@@ -1188,6 +1188,17 @@ export function useAudio() {
     []
   );
 
+  const searchSuggestions = useCallback(
+    async (query: string, limit: number = 3): Promise<string[]> => {
+      try {
+        return await invoke<string[]>("search_suggestions", { query, limit });
+      } catch {
+        return [];
+      }
+    },
+    []
+  );
+
   const toggleDrawer = () => {
     setDrawerOpen((prev) => !prev);
   };
@@ -1395,6 +1406,7 @@ export function useAudio() {
     navigateToMix,
     navigateToTrackRadio,
     searchTidal,
+    searchSuggestions,
     getHomePage,
     refreshHomePage,
     getFavoriteArtists,
