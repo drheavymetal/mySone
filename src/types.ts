@@ -6,10 +6,11 @@ export function getTidalImageUrl(
   if (!coverUuid) return "";
   // Tidal cover UUIDs need to be converted: uuid with dashes -> path with slashes
   const path = coverUuid.replace(/-/g, "/");
-  // Use standard Tidal sizes: 160, 320, 640, 1280
+  // Use standard Tidal sizes: 80, 160, 320, 640, 1280
   // If an invalid size is requested, snap to the nearest supported size
   let validSize = 320;
-  if (size <= 160) validSize = 160;
+  if (size <= 80) validSize = 80;
+  else if (size <= 160) validSize = 160;
   else if (size <= 320) validSize = 320;
   else if (size <= 640) validSize = 640;
   else validSize = 1280;

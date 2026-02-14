@@ -124,8 +124,7 @@ export default function TrackContextMenu({
       if (
         menuRef.current &&
         !menuRef.current.contains(e.target as Node) &&
-        anchorRef.current &&
-        !anchorRef.current.contains(e.target as Node)
+        (!anchorRef.current || !anchorRef.current.contains(e.target as Node))
       ) {
         onClose();
       }

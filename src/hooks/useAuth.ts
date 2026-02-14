@@ -1,5 +1,5 @@
-import { useEffect, useCallback } from "react";
-import { useAtom, useSetAtom } from "jotai";
+import { useCallback } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { isAuthenticatedAtom, authTokensAtom, userNameAtom } from "../atoms/auth";
 import { userPlaylistsAtom, favoritePlaylistsAtom } from "../atoms/playlists";
@@ -13,9 +13,9 @@ const VOLUME_STATE_KEY = "tide-vibe.volume.v1";
 export function useAuth() {
   const [isAuthenticated, setIsAuthenticated] = useAtom(isAuthenticatedAtom);
   const [authTokens, setAuthTokens] = useAtom(authTokensAtom);
-  const [userName, setUserName] = useAtom(userNameAtom);
+  const userName = useAtomValue(userNameAtom);
 
-  // Cross-domain setters for logout / auth load
+  // Cross-domain setters for logout
   const setUserPlaylists = useSetAtom(userPlaylistsAtom);
   const setFavoritePlaylists = useSetAtom(favoritePlaylistsAtom);
   const setIsPlaying = useSetAtom(isPlayingAtom);
@@ -24,103 +24,8 @@ export function useAuth() {
   const setHistory = useSetAtom(historyAtom);
   const setFavoriteTrackIds = useSetAtom(favoriteTrackIdsAtom);
 
-  // Load saved auth on mount
-  useEffect(() => {
-    const loadAuth = async () => {
-      try {
-        console.log("Loading saved auth...");
-        const tokens = await invoke<AuthTokens | null>("load_saved_auth");
-        console.log("Loaded tokens:", tokens);
-
-        if (tokens) {
-          let userId = tokens.user_id;
-          if (!userId) {
-            try {
-              userId = await invoke<number>("get_session_user_id");
-              console.log("Got user ID from session:", userId);
-            } catch (e) {
-              console.error("Failed to get user ID:", e);
-            }
-          }
-
-          let activeTokens = { ...tokens, user_id: userId };
-          setAuthTokens(activeTokens);
-          setIsAuthenticated(true);
-
-          if (userId) {
-            // Fetch user name (non-blocking)
-            invoke<[string, string | null]>("get_user_profile", { userId })
-              .then(([name]) => {
-                if (name) setUserName(name);
-              })
-              .catch(() => {});
-
-            try {
-              console.log("Loading playlists for user:", userId);
-              const playlists = await invoke<Playlist[]>("get_user_playlists", {
-                userId: userId,
-              });
-              console.log("Loaded playlists:", playlists?.length);
-              setUserPlaylists(playlists || []);
-
-              invoke<Playlist[]>("get_favorite_playlists", { userId })
-                .then((favPlaylists) => {
-                  console.log("Loaded favorite playlists:", favPlaylists?.length);
-                  setFavoritePlaylists(favPlaylists || []);
-                })
-                .catch((err) => {
-                  console.error("Failed to load favorite playlists:", err);
-                  setFavoritePlaylists([]);
-                });
-            } catch (playlistErr: any) {
-              const errStr = String(playlistErr);
-              console.error("Failed to load playlists:", playlistErr);
-
-              if (errStr.includes("401") || errStr.includes("expired")) {
-                try {
-                  console.log("Token expired, attempting refresh...");
-                  const refreshedTokens = await invoke<AuthTokens>(
-                    "refresh_tidal_auth"
-                  );
-                  console.log("Token refreshed successfully");
-
-                  activeTokens = {
-                    ...refreshedTokens,
-                    user_id: userId ?? refreshedTokens.user_id,
-                  };
-                  setAuthTokens(activeTokens);
-
-                  const playlists = await invoke<Playlist[]>(
-                    "get_user_playlists",
-                    { userId: userId }
-                  );
-                  console.log("Loaded playlists after refresh:", playlists?.length);
-                  setUserPlaylists(playlists || []);
-
-                  invoke<Playlist[]>("get_favorite_playlists", { userId })
-                    .then((favPlaylists) => setFavoritePlaylists(favPlaylists || []))
-                    .catch(() => setFavoritePlaylists([]));
-                } catch (refreshErr) {
-                  console.error("Token refresh failed:", refreshErr);
-                  setIsAuthenticated(false);
-                  setAuthTokens(null);
-                  setUserPlaylists([]);
-                  setFavoritePlaylists([]);
-                }
-              } else {
-                setUserPlaylists([]);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to load saved auth:", err);
-      }
-    };
-
-    loadAuth();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // NOTE: Auth loading effect has been moved to AppInitializer
+  // to avoid running once per component that calls useAuth().
 
   const importSession = useCallback(
     async (

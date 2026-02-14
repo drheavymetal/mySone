@@ -10,6 +10,7 @@ import ArtistPage from "./components/ArtistPage";
 import MixPage from "./components/MixPage";
 import TrackRadioPage from "./components/TrackRadioPage";
 import Login from "./components/Login";
+import { AppInitializer } from "./components/AppInitializer";
 import { useAuth } from "./hooks/useAuth";
 import { useNavigation } from "./hooks/useNavigation";
 import { ToastProvider } from "./contexts/ToastContext";
@@ -152,6 +153,7 @@ function App() {
 
   return (
     <ToastProvider>
+      <AppInitializer />
       <AppContent />
     </ToastProvider>
   );

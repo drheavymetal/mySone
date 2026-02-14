@@ -9,7 +9,6 @@ import {
   VolumeX,
   Volume1,
   Heart,
-  Loader2,
   ListMusic,
   Mic2,
 } from "lucide-react";
@@ -63,13 +62,13 @@ const FavoriteButton = memo(function FavoriteButton() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const favoriteTrackIds = useAtomValue(favoriteTrackIdsAtom);
   const { addFavoriteTrack, removeFavoriteTrack } = useFavorites();
-  const [isPending, setIsPending] = useState(false);
 
   const isLiked = currentTrack ? favoriteTrackIds.has(currentTrack.id) : false;
 
   const toggleLike = useCallback(async () => {
-    if (!currentTrack || isPending) return;
-    setIsPending(true);
+    if (!currentTrack) return;
+    // Optimistic — addFavoriteTrack / removeFavoriteTrack update the atom
+    // synchronously before the await, so the UI reflects the change instantly.
     try {
       if (isLiked) {
         await removeFavoriteTrack(currentTrack.id);
@@ -78,30 +77,23 @@ const FavoriteButton = memo(function FavoriteButton() {
       }
     } catch (err) {
       console.error("Failed to toggle track favorite:", err);
-    } finally {
-      setIsPending(false);
     }
-  }, [currentTrack, isPending, isLiked, addFavoriteTrack, removeFavoriteTrack]);
+  }, [currentTrack, isLiked, addFavoriteTrack, removeFavoriteTrack]);
 
   if (!currentTrack) return null;
 
   return (
     <button
       onClick={toggleLike}
-      disabled={isPending}
       className={`ml-1 flex-shrink-0 transition-[color,transform] duration-200 active:scale-90 ${
         isLiked ? "text-[#1ed760]" : "text-[#666] hover:text-white"
-      } ${isPending ? "opacity-70 cursor-not-allowed" : ""}`}
+      }`}
     >
-      {isPending ? (
-        <Loader2 size={16} className="animate-spin" />
-      ) : (
-        <Heart
-          size={16}
-          fill={isLiked ? "currentColor" : "none"}
-          strokeWidth={isLiked ? 0 : 2}
-        />
-      )}
+      <Heart
+        size={16}
+        fill={isLiked ? "currentColor" : "none"}
+        strokeWidth={isLiked ? 0 : 2}
+      />
     </button>
   );
 });
@@ -118,12 +110,15 @@ const ProgressScrubber = memo(function ProgressScrubber() {
   const [dragTime, setDragTime] = useState(0);
   const [isHoveringProgress, setIsHoveringProgress] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
+  // Prevent sync from overwriting currentTime right after a seek
+  const seekGuardUntil = useRef(0);
 
   // Sync progress with backend playback position
   useEffect(() => {
     if (!isPlaying || !currentTrack || isDragging) return;
 
     const syncPosition = async () => {
+      if (Date.now() < seekGuardUntil.current) return;
       const pos = await getPlaybackPosition();
       setCurrentTime(pos);
     };
@@ -189,9 +184,12 @@ const ProgressScrubber = memo(function ProgressScrubber() {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
         const finalTime = getTimeFromClientX(ev.clientX);
-        setIsDragging(false);
-        setIsHoveringProgress(false);
+        // Set currentTime before clearing isDragging so there's no flicker
         setCurrentTime(finalTime);
+        setIsDragging(false);
+        // Don't reset isHoveringProgress — let onMouseLeave handle it
+        // Guard against sync overwriting with stale backend position
+        seekGuardUntil.current = Date.now() + 600;
         await seekTo(finalTime);
       };
 
@@ -213,25 +211,28 @@ const ProgressScrubber = memo(function ProgressScrubber() {
         onMouseLeave={() => {
           if (!isDragging) setIsHoveringProgress(false);
         }}
-        className="scrubber flex-1 relative cursor-pointer py-[6px]"
+        className="scrubber flex-1 relative cursor-pointer h-[17px] flex items-center"
       >
-        {/* Track background */}
-        <div
-          className={`relative w-full rounded-full transition-[height] duration-100 ${
-            isHoveringProgress || isDragging ? "h-[5px]" : "h-[3px]"
-          }`}
-        >
+        {/* Track background — fixed height container prevents layout shift */}
+        <div className="relative w-full h-[5px] rounded-full">
           {/* Unfilled track */}
           <div className="absolute inset-0 bg-white/[0.12] rounded-full" />
-          {/* Filled track */}
+          {/* Filled track — thinner when not hovered, centered vertically */}
           <div
-            className={`absolute h-full rounded-full transition-colors duration-100 ${
+            className={`absolute left-0 rounded-full transition-[height,top,background-color] duration-100 ${
               isHoveringProgress || isDragging
-                ? "bg-[#00ffff]"
-                : "bg-white/60"
+                ? "h-full top-0 bg-[#00ffff]"
+                : "h-[3px] top-[1px] bg-white/60"
             }`}
             style={{ width: `${clampedProgress}%` }}
           />
+          {/* Unfilled track overlay — thinner when not hovered */}
+          {!(isHoveringProgress || isDragging) && (
+            <div className="absolute inset-0 rounded-full">
+              <div className="absolute left-0 right-0 top-0 h-[1px] bg-[#181818]" />
+              <div className="absolute left-0 right-0 bottom-0 h-[1px] bg-[#181818]" />
+            </div>
+          )}
         </div>
         {/* Scrub handle */}
         <div

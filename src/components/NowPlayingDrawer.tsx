@@ -6,7 +6,6 @@ import {
   Users,
   Music,
   Loader2,
-  Plus,
   Play,
   Heart,
   MoreHorizontal,
@@ -14,12 +13,19 @@ import {
   GripVertical,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { usePlayback } from "../hooks/usePlayback";
 import { useDrawer } from "../hooks/useDrawer";
 import { useFavorites } from "../hooks/useFavorites";
+import { useNavigation } from "../hooks/useNavigation";
 import { useToast } from "../contexts/ToastContext";
 import { getTrackRadio, getTrackLyrics, getTrackCredits } from "../api/tidal";
-import { getTidalImageUrl, type Track, type Lyrics, type Credit } from "../types";
+import {
+  getTidalImageUrl,
+  type Track,
+  type Lyrics,
+  type Credit,
+} from "../types";
 import TidalImage from "./TidalImage";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -44,6 +50,11 @@ function QueueTab() {
     setQueueTracks,
     removeFromQueue,
   } = usePlayback();
+  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
+    useFavorites();
+  const { navigateToArtist, navigateToAlbum } = useNavigation();
+  const { setDrawerOpen } = useDrawer();
+  const { showToast } = useToast();
 
   // Use a ref so drop handler always reads the current source index
   const dragIdxRef = useRef<number | null>(null);
@@ -95,6 +106,69 @@ function QueueTab() {
     setDropIdx(null);
   }, []);
 
+  const handleToggleFavorite = useCallback(
+    async (trackId: number) => {
+      const isFav = favoriteTrackIds.has(trackId);
+      try {
+        if (isFav) {
+          await removeFavoriteTrack(trackId);
+          showToast("Removed from Loved tracks");
+        } else {
+          await addFavoriteTrack(trackId);
+          showToast("Added to Loved tracks");
+        }
+      } catch {
+        showToast("Failed to update Loved tracks", "error");
+      }
+    },
+    [favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack, showToast]
+  );
+
+  const handleArtistClick = useCallback(
+    (track: Track) => {
+      if (track.artist?.id) {
+        setDrawerOpen(false);
+        navigateToArtist(track.artist.id, {
+          name: track.artist.name,
+          picture: track.artist.picture,
+        });
+      }
+    },
+    [navigateToArtist, setDrawerOpen]
+  );
+
+  const handleAlbumClick = useCallback(
+    (track: Track) => {
+      if (track.album?.id) {
+        setDrawerOpen(false);
+        navigateToAlbum(track.album.id, {
+          title: track.album.title,
+          cover: track.album.cover,
+          artistName: track.artist?.name,
+        });
+      }
+    },
+    [navigateToAlbum, setDrawerOpen]
+  );
+
+  /** Shared props builder for TrackRow to avoid repetition */
+  const trackRowNav = useCallback(
+    (track: Track) => ({
+      isFav: favoriteTrackIds.has(track.id),
+      onToggleFavorite: () => handleToggleFavorite(track.id),
+      onArtistClick: track.artist?.id
+        ? () => handleArtistClick(track)
+        : undefined,
+      onAlbumClick: track.album?.id ? () => handleAlbumClick(track) : undefined,
+    }),
+    [
+      favoriteTrackIds,
+      handleToggleFavorite,
+      handleArtistClick,
+      handleAlbumClick,
+    ]
+  );
+
   return (
     <div className="flex flex-col gap-6">
       {/* History — chronological order, most recent at the bottom */}
@@ -112,6 +186,7 @@ function QueueTab() {
                 isPlaying={false}
                 dimmed
                 onClick={() => playTrack(track)}
+                {...trackRowNav(track)}
               />
             ))}
           </div>
@@ -129,6 +204,7 @@ function QueueTab() {
             isActive
             isPlaying={isPlaying}
             onClick={() => {}}
+            {...trackRowNav(currentTrack)}
           />
         </section>
       )}
@@ -189,6 +265,7 @@ function QueueTab() {
                         playTrack(track);
                       }}
                       onRemove={() => removeFromQueue(i)}
+                      {...trackRowNav(track)}
                     />
                   </div>
 
@@ -225,6 +302,8 @@ function SuggestedTrackRow({
   onPlay,
   onAddToQueue,
   onToggleFavorite,
+  onArtistClick,
+  onAlbumClick,
 }: {
   track: Track;
   isActive: boolean;
@@ -233,9 +312,14 @@ function SuggestedTrackRow({
   onPlay: (track: Track) => void;
   onAddToQueue: (track: Track) => void;
   onToggleFavorite: (trackId: number, isFav: boolean) => void;
+  onArtistClick?: (track: Track) => void;
+  onAlbumClick?: (track: Track) => void;
 }) {
   // Context menu state — lightweight, no heavy hooks
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const dotsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [dotsMenuOpen, setDotsMenuOpen] = useState(false);
 
@@ -277,13 +361,10 @@ function SuggestedTrackRow({
     [track, onAddToQueue]
   );
 
-  const handleDotsClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      setDotsMenuOpen(true);
-    },
-    []
-  );
+  const handleDotsClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDotsMenuOpen(true);
+  }, []);
 
   return (
     <>
@@ -306,11 +387,7 @@ function SuggestedTrackRow({
           />
           {/* Play overlay — only visible when hovering the image itself */}
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity">
-            <Play
-              size={14}
-              fill="white"
-              className="text-white ml-0.5"
-            />
+            <Play size={14} fill="white" className="text-white ml-0.5" />
           </div>
         </div>
 
@@ -324,17 +401,43 @@ function SuggestedTrackRow({
             {track.title}
           </p>
           <p className="text-[11px] text-[#a6a6a6] truncate">
-            {track.artist?.name || "Unknown Artist"}
+            {track.artist?.name ? (
+              <span
+                className="hover:text-white hover:underline cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArtistClick?.(track);
+                }}
+              >
+                {track.artist.name}
+              </span>
+            ) : (
+              "Unknown Artist"
+            )}
+            {track.album?.title && (
+              <>
+                <span className="mx-1">&middot;</span>
+                <span
+                  className="hover:text-white hover:underline cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAlbumClick?.(track);
+                  }}
+                >
+                  {track.album.title}
+                </span>
+              </>
+            )}
           </p>
         </div>
 
-        {/* Right-side action icons */}
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        {/* Right-side action icons — always visible */}
+        <div className="flex items-center gap-0.5 shrink-0">
           {/* Three dots menu */}
           <button
             ref={dotsBtnRef}
             onClick={handleDotsClick}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-[#a6a6a6] hover:text-white hover:bg-white/10 transition-colors duration-150"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[#535353] hover:text-white hover:bg-white/10 transition-colors duration-150"
             title="More options"
           >
             <MoreHorizontal size={15} />
@@ -348,7 +451,9 @@ function SuggestedTrackRow({
           >
             <Heart
               size={15}
-              className={isFav ? "text-[#00FFFF]" : "text-[#a6a6a6] hover:text-white"}
+              className={
+                isFav ? "text-[#00FFFF]" : "text-[#535353] hover:text-white"
+              }
               fill={isFav ? "currentColor" : "none"}
             />
           </button>
@@ -356,7 +461,7 @@ function SuggestedTrackRow({
           {/* Add to queue */}
           <button
             onClick={handleAddToQueue}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-[#a6a6a6] hover:text-white hover:bg-white/10 transition-colors duration-150"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[#535353] hover:text-white hover:bg-white/10 transition-colors duration-150"
             title="Add to queue"
           >
             <ListPlus size={15} />
@@ -369,7 +474,9 @@ function SuggestedTrackRow({
         <TrackContextMenu
           track={track}
           index={index}
-          anchorRef={{ current: null } as React.RefObject<HTMLButtonElement | null>}
+          anchorRef={
+            { current: null } as React.RefObject<HTMLButtonElement | null>
+          }
           cursorPosition={contextMenu}
           onClose={() => setContextMenu(null)}
         />
@@ -390,7 +497,10 @@ function SuggestedTrackRow({
 
 function SuggestedTab() {
   const { currentTrack, playTrack, addToQueue } = usePlayback();
-  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } = useFavorites();
+  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
+    useFavorites();
+  const { navigateToArtist, navigateToAlbum } = useNavigation();
+  const { setDrawerOpen } = useDrawer();
   const { showToast } = useToast();
 
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -424,7 +534,8 @@ function SuggestedTab() {
   const handleAddToQueue = useCallback(
     (track: Track) => {
       addToQueue(track);
-      const label = track.title.length > 30 ? track.title.slice(0, 28) + "…" : track.title;
+      const label =
+        track.title.length > 30 ? track.title.slice(0, 28) + "…" : track.title;
       showToast(`Added "${label}" to queue`, "success");
     },
     [addToQueue, showToast]
@@ -445,6 +556,33 @@ function SuggestedTab() {
       }
     },
     [addFavoriteTrack, removeFavoriteTrack, showToast]
+  );
+
+  const handleArtistClick = useCallback(
+    (track: Track) => {
+      if (track.artist?.id) {
+        setDrawerOpen(false);
+        navigateToArtist(track.artist.id, {
+          name: track.artist.name,
+          picture: track.artist.picture,
+        });
+      }
+    },
+    [navigateToArtist, setDrawerOpen]
+  );
+
+  const handleAlbumClick = useCallback(
+    (track: Track) => {
+      if (track.album?.id) {
+        setDrawerOpen(false);
+        navigateToAlbum(track.album.id, {
+          title: track.album.title,
+          cover: track.album.cover,
+          artistName: track.artist?.name,
+        });
+      }
+    },
+    [navigateToAlbum, setDrawerOpen]
   );
 
   if (loading) {
@@ -476,6 +614,8 @@ function SuggestedTab() {
           onPlay={playTrack}
           onAddToQueue={handleAddToQueue}
           onToggleFavorite={handleToggleFavorite}
+          onArtistClick={handleArtistClick}
+          onAlbumClick={handleAlbumClick}
         />
       ))}
     </div>
@@ -838,7 +978,10 @@ function TrackRow({
   dimmed,
   onClick,
   onRemove,
-  onAdd,
+  isFav,
+  onToggleFavorite,
+  onArtistClick,
+  onAlbumClick,
 }: {
   track: Track;
   isActive: boolean;
@@ -846,80 +989,277 @@ function TrackRow({
   dimmed?: boolean;
   onClick: () => void;
   onRemove?: () => void;
-  onAdd?: () => void;
+  isFav?: boolean;
+  onToggleFavorite?: () => void;
+  onArtistClick?: () => void;
+  onAlbumClick?: () => void;
 }) {
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const dotsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [dotsMenuOpen, setDotsMenuOpen] = useState(false);
+
   return (
-    <div
-      onClick={onClick}
-      className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer group transition-[background-color] duration-150 ${
-        isActive ? "bg-white/[0.08]" : "hover:bg-white/[0.05]"
-      } ${dimmed ? "opacity-50" : ""}`}
-    >
-      <div className="w-10 h-10 rounded bg-[#282828] overflow-hidden shrink-0 relative">
-        <TidalImage
-          src={getTidalImageUrl(track.album?.cover, 80)}
-          alt={track.title}
-          className="w-full h-full"
-        />
-        {isActive && isPlaying && (
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-            <div className="flex items-end gap-[2px] h-3.5">
-              <span className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar" />
-              <span className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.2s" }} />
-              <span className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.4s" }} />
+    <>
+      <div
+        onClick={onClick}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({ x: e.clientX, y: e.clientY });
+        }}
+        className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer group transition-[background-color] duration-150 ${
+          isActive ? "bg-white/[0.08]" : "hover:bg-white/[0.05]"
+        } ${dimmed ? "opacity-50" : ""}`}
+      >
+        <div className="w-10 h-10 rounded bg-[#282828] overflow-hidden shrink-0 relative">
+          <TidalImage
+            src={getTidalImageUrl(track.album?.cover, 80)}
+            alt={track.title}
+            className="w-full h-full"
+          />
+          {isActive && isPlaying && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+              <div className="flex items-end gap-[2px] h-3.5">
+                <span className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar" />
+                <span
+                  className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar"
+                  style={{ animationDelay: "0.2s" }}
+                />
+                <span
+                  className="w-[2px] h-full bg-[#00FFFF] rounded-full playing-bar"
+                  style={{ animationDelay: "0.4s" }}
+                />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p
-          className={`text-[13px] font-medium truncate ${
-            isActive ? "text-[#00FFFF]" : "text-white"
-          }`}
-        >
-          {track.title}
-        </p>
-        <p className="text-[11px] text-[#a6a6a6] truncate">
-          {track.artist?.name || "Unknown Artist"}
-        </p>
-      </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        {onAdd && (
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p
+            className={`text-[13px] font-medium truncate ${
+              isActive ? "text-[#00FFFF]" : "text-white"
+            }`}
+          >
+            {track.title}
+          </p>
+          <p className="text-[11px] text-[#a6a6a6] truncate">
+            {track.artist?.name ? (
+              <span
+                className={
+                  onArtistClick
+                    ? "hover:text-white hover:underline cursor-pointer"
+                    : ""
+                }
+                onClick={
+                  onArtistClick
+                    ? (e) => {
+                        e.stopPropagation();
+                        onArtistClick();
+                      }
+                    : undefined
+                }
+              >
+                {track.artist.name}
+              </span>
+            ) : (
+              "Unknown Artist"
+            )}
+            {track.album?.title && (
+              <>
+                <span className="mx-1">&middot;</span>
+                <span
+                  className={
+                    onAlbumClick
+                      ? "hover:text-white hover:underline cursor-pointer"
+                      : ""
+                  }
+                  onClick={
+                    onAlbumClick
+                      ? (e) => {
+                          e.stopPropagation();
+                          onAlbumClick();
+                        }
+                      : undefined
+                  }
+                >
+                  {track.album.title}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          {/* Three dots menu */}
           <button
+            ref={dotsBtnRef}
             onClick={(e) => {
               e.stopPropagation();
-              onAdd();
+              setDotsMenuOpen(true);
             }}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-[#a6a6a6] hover:text-white hover:bg-white/10 transition-colors duration-150"
-            title="Add to queue"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[#535353] hover:text-white hover:bg-white/10 transition-colors duration-150"
+            title="More options"
           >
-            <Plus size={14} />
+            <MoreHorizontal size={15} />
           </button>
-        )}
-        {onRemove && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-[#a6a6a6] hover:text-white hover:bg-white/10 transition-colors duration-150"
-            title="Remove"
-          >
-            <X size={14} />
-          </button>
-        )}
+
+          {/* Heart / favorite */}
+          {onToggleFavorite && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite();
+              }}
+              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors duration-150"
+              title={isFav ? "Remove from Loved tracks" : "Add to Loved tracks"}
+            >
+              <Heart
+                size={15}
+                className={
+                  isFav ? "text-[#00FFFF]" : "text-[#535353] hover:text-white"
+                }
+                fill={isFav ? "currentColor" : "none"}
+              />
+            </button>
+          )}
+
+          {onRemove && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[#535353] hover:text-white hover:bg-white/10 transition-colors duration-150"
+              title="Remove"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* Context menu (right-click) */}
+      {contextMenu && (
+        <TrackContextMenu
+          track={track}
+          index={0}
+          anchorRef={
+            { current: null } as React.RefObject<HTMLButtonElement | null>
+          }
+          cursorPosition={contextMenu}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Context menu (dots button) */}
+      {dotsMenuOpen && (
+        <TrackContextMenu
+          track={track}
+          index={0}
+          anchorRef={dotsBtnRef}
+          onClose={() => setDotsMenuOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
 // ─── Main Drawer ─────────────────────────────────────────────────────────────
+
+/** Extract the average color from an image URL via fetch + canvas. */
+function useDominantColor(imageUrl: string | undefined) {
+  const [color, setColor] = useState<string | null>(null);
+  const prevUrl = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!imageUrl) {
+      setColor(null);
+      return;
+    }
+    if (imageUrl === prevUrl.current) return;
+    prevUrl.current = imageUrl;
+
+    console.log("useDominantColor: Processing", imageUrl);
+    let cancelled = false;
+
+    // Fetch via Tauri backend to bypass CORS
+    invoke<number[]>("get_image_bytes", { url: imageUrl })
+      .then((bytes) => {
+        if (cancelled) return;
+        const u8arr = new Uint8Array(bytes);
+        const blob = new Blob([u8arr]);
+        const blobUrl = URL.createObjectURL(blob);
+
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = 1;
+            canvas.height = 1;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              console.error("useDominantColor: No 2d context");
+              return;
+            }
+
+            // Draw just the center pixel
+            ctx.drawImage(
+              img,
+              Math.floor(img.width / 2),
+              Math.floor(img.height / 2),
+              1,
+              1,
+              0,
+              0,
+              1,
+              1
+            );
+
+            const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+            const newColor = `${r}, ${g}, ${b}`;
+
+            console.log(
+              "useDominantColor: Found color (middle pixel)",
+              newColor
+            );
+            if (!cancelled) {
+              setColor(newColor);
+            }
+          } catch (e) {
+            console.error("useDominantColor: Canvas error", e);
+          } finally {
+            URL.revokeObjectURL(blobUrl);
+          }
+        };
+        img.onerror = (e) => {
+          console.error("useDominantColor: Image load error", e);
+          URL.revokeObjectURL(blobUrl);
+        };
+        img.src = blobUrl;
+      })
+      .catch((e) => {
+        console.error("useDominantColor: Tauri fetch error", e);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+
+  return color;
+}
 
 export default function NowPlayingDrawer() {
   const { currentTrack } = usePlayback();
   const { drawerOpen, setDrawerOpen, drawerTab, setDrawerTab } = useDrawer();
   const activeTab = (drawerTab || "queue") as TabId;
   const setActiveTab = (tab: TabId) => setDrawerTab(tab);
+
+  const coverUrl = currentTrack
+    ? getTidalImageUrl(currentTrack.album?.cover, 80)
+    : undefined;
+  const dominantColor = useDominantColor(coverUrl);
 
   // Close on Escape
   useEffect(() => {
@@ -943,8 +1283,20 @@ export default function NowPlayingDrawer() {
 
       {/* Drawer content */}
       <div className="relative z-10 flex-1 flex overflow-hidden bg-[#121212] animate-slideUp">
+        {/* Gradient overlay from dominant album color */}
+        <div
+          className="absolute inset-0 pointer-events-none z-0 transition-colors duration-1000 ease-in-out"
+          style={{
+            backgroundColor: dominantColor
+              ? `rgb(${dominantColor})`
+              : "transparent",
+            maskImage: `linear-gradient(to bottom, rgba(${dominantColor}) 0%, rgba(0,0,0,0.05) 60%, transparent 70%)`,
+            WebkitMaskImage: `linear-gradient(to bottom, rgba(${dominantColor}) 0%, rgba(0,0,0,0.05) 60%, transparent 70%)`,
+          }}
+        />
+
         {/* Left: Album Art — 40% */}
-        <div className="w-[40%] flex flex-col items-center justify-center p-10 gap-6">
+        <div className="relative z-[1] w-[40%] flex flex-col items-center justify-center p-10 gap-6">
           <div className="w-full max-w-[380px] aspect-square rounded-lg overflow-hidden shadow-2xl shadow-black/60">
             <TidalImage
               src={getTidalImageUrl(currentTrack.album?.cover, 640)}
@@ -963,7 +1315,7 @@ export default function NowPlayingDrawer() {
         </div>
 
         {/* Right: Tabs — 60% */}
-        <div className="w-[60%] flex flex-col min-w-0 border-l border-white/[0.06]">
+        <div className="relative z-[1] w-[60%] flex flex-col min-w-0 border-l border-white/[0.06]">
           {/* Tab bar + close */}
           <div className="flex items-center justify-between px-6 pt-5 pb-2">
             <div className="flex items-center gap-1 flex-wrap">
@@ -990,12 +1342,36 @@ export default function NowPlayingDrawer() {
             </button>
           </div>
 
-          {/* Tab content */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
-            {activeTab === "queue" && <QueueTab />}
-            {activeTab === "suggested" && <SuggestedTab />}
-            {activeTab === "lyrics" && <LyricsTab />}
-            {activeTab === "credits" && <CreditsTab />}
+          {/* Tab content — all tabs stay mounted to preserve state; inactive ones are hidden */}
+          <div className="flex-1 overflow-hidden relative">
+            <div
+              className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent ${
+                activeTab === "queue" ? "" : "hidden"
+              }`}
+            >
+              <QueueTab />
+            </div>
+            <div
+              className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent ${
+                activeTab === "suggested" ? "" : "hidden"
+              }`}
+            >
+              <SuggestedTab />
+            </div>
+            <div
+              className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent ${
+                activeTab === "lyrics" ? "" : "hidden"
+              }`}
+            >
+              <LyricsTab />
+            </div>
+            <div
+              className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent ${
+                activeTab === "credits" ? "" : "hidden"
+              }`}
+            >
+              <CreditsTab />
+            </div>
           </div>
         </div>
       </div>

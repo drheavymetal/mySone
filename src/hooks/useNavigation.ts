@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useCallback } from "react";
 import { useAtom } from "jotai";
 import { currentViewAtom } from "../atoms/navigation";
 import type { AppView } from "../types";
@@ -6,21 +6,8 @@ import type { AppView } from "../types";
 export function useNavigation() {
   const [currentView, setCurrentView] = useAtom(currentViewAtom);
 
-  // Handle browser history navigation (back/forward buttons)
-  useEffect(() => {
-    if (!window.history.state) {
-      window.history.replaceState({ type: "home" }, "");
-    }
-
-    const handlePopState = (event: PopStateEvent) => {
-      if (event.state) {
-        setCurrentView(event.state);
-      }
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [setCurrentView]);
+  // NOTE: Popstate listener has been moved to AppInitializer
+  // to avoid registering once per component that calls useNavigation().
 
   const navigateToAlbum = useCallback(
     (

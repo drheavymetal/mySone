@@ -9,9 +9,7 @@ import {
   historyAtom,
   streamInfoAtom,
 } from "../atoms/playback";
-import type { Track, StreamInfo, PlaybackSnapshot } from "../types";
-
-const PLAYBACK_STATE_KEY = "tide-vibe.playback-state.v1";
+import type { Track, StreamInfo } from "../types";
 
 export function usePlayback() {
   const [isPlaying, setIsPlaying] = useAtom(isPlayingAtom);
@@ -22,101 +20,15 @@ export function usePlayback() {
   const [streamInfo, setStreamInfo] = useAtom(streamInfoAtom);
 
   const currentTrackRef = useRef<Track | null>(null);
-  const hasRestoredPlaybackRef = useRef(false);
-  const playbackPersistReady = useRef(false);
-  // Track whether volume was synced to backend after restore.
-  const volumeSyncedRef = useRef(false);
 
   // Keep ref in sync so callbacks always see latest value
   useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
 
-  // Restore last playback session (track + queue + history)
-  // Volume is handled by atomWithStorage automatically.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PLAYBACK_STATE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<PlaybackSnapshot>;
-
-        if (parsed.currentTrack && typeof parsed.currentTrack.id === "number") {
-          setCurrentTrack(parsed.currentTrack as Track);
-        }
-
-        if (Array.isArray(parsed.queue)) {
-          setQueue(
-            parsed.queue.filter(
-              (track): track is Track => !!track && typeof track.id === "number"
-            )
-          );
-        }
-
-        if (Array.isArray(parsed.history)) {
-          setHistory(
-            parsed.history.filter(
-              (track): track is Track => !!track && typeof track.id === "number"
-            )
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Failed to restore playback state:", err);
-    } finally {
-      hasRestoredPlaybackRef.current = true;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Sync restored volume to backend once on mount.
-  // `volumeAtom` is restored from localStorage by atomWithStorage synchronously,
-  // but we still need to push it to the Tauri backend.
-  useEffect(() => {
-    if (!volumeSyncedRef.current) {
-      volumeSyncedRef.current = true;
-      invoke("set_volume", { level: volume }).catch((err) => {
-        console.error("Failed to apply restored volume:", err);
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist now-playing state across app relaunches.
-  useEffect(() => {
-    if (!hasRestoredPlaybackRef.current) return;
-
-    if (!playbackPersistReady.current) {
-      playbackPersistReady.current = true;
-      return;
-    }
-
-    const snapshot: PlaybackSnapshot = { currentTrack, queue, history };
-
-    try {
-      localStorage.setItem(PLAYBACK_STATE_KEY, JSON.stringify(snapshot));
-    } catch (err) {
-      console.error("Failed to persist playback state:", err);
-    }
-  }, [currentTrack, queue, history]);
-
-  // Auto-play next track when current finishes
-  useEffect(() => {
-    if (!isPlaying || !currentTrack) return;
-
-    const checkInterval = setInterval(async () => {
-      try {
-        const isFinished = await invoke<boolean>("is_track_finished");
-        if (isFinished && queue.length > 0) {
-          playNext();
-        }
-      } catch (err) {
-        console.error("Failed to check track status:", err);
-      }
-    }, 1000);
-
-    return () => clearInterval(checkInterval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, currentTrack, queue]);
+  // NOTE: All global/init effects (restore, volume sync, persistence,
+  // auto-play, keyboard shortcuts) have been moved to AppInitializer
+  // to avoid running once per component that calls usePlayback().
 
   const playTrack = useCallback(
     async (track: Track) => {
@@ -274,48 +186,6 @@ export function usePlayback() {
       await seekTo(0);
     }
   }, [history, setHistory, setQueue, setStreamInfo, setCurrentTrack, setIsPlaying, getPlaybackPosition, seekTo]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      switch (e.code) {
-        case "Space":
-          e.preventDefault();
-          if (isPlaying) {
-            pauseTrack();
-          } else {
-            resumeTrack();
-          }
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          playPrevious();
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          playNext();
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setVolume(Math.min(1.0, volume + 0.1));
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          setVolume(Math.max(0.0, volume - 0.1));
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPlaying, volume, playNext, playPrevious, pauseTrack, resumeTrack, setVolume]);
 
   return {
     isPlaying,
