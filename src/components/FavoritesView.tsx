@@ -1,7 +1,9 @@
 import { Heart } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useAuth } from "../hooks/useAuth";
+import { getFavoriteTracks } from "../api/tidal";
+import { type Track } from "../types";
 import TrackList from "./TrackList";
 
 interface FavoritesViewProps {
@@ -11,11 +13,8 @@ interface FavoritesViewProps {
 const PAGE_SIZE = 50;
 
 export default function FavoritesView({ onBack }: FavoritesViewProps) {
-  const {
-    getFavoriteTracks,
-    playTrack,
-    setQueueTracks,
-  } = useAudioContext();
+  const { authTokens } = useAuth();
+  const { playTrack, setQueueTracks } = usePlayback();
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [totalTracks, setTotalTracks] = useState(0);
@@ -33,6 +32,13 @@ export default function FavoritesView({ onBack }: FavoritesViewProps) {
     let cancelled = false;
 
     const loadFavorites = async () => {
+      const userId = authTokens?.user_id;
+      if (userId == null) {
+        setLoading(false);
+        setError("Not authenticated");
+        return;
+      }
+
       setLoading(true);
       setError(null);
       setTracks([]);
@@ -40,7 +46,11 @@ export default function FavoritesView({ onBack }: FavoritesViewProps) {
       hasMoreRef.current = true;
 
       try {
-        const firstPage = await getFavoriteTracks(0, PAGE_SIZE);
+        const firstPage = await getFavoriteTracks(
+          userId,
+          0,
+          PAGE_SIZE
+        );
 
         if (cancelled) return;
 
@@ -63,15 +73,17 @@ export default function FavoritesView({ onBack }: FavoritesViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [getFavoriteTracks]);
+  }, [authTokens?.user_id]);
 
   // Load more tracks
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMoreRef.current) return;
+    const userId = authTokens?.user_id;
+    if (userId == null) return;
 
     setLoadingMore(true);
     try {
-      const page = await getFavoriteTracks(offsetRef.current, PAGE_SIZE);
+      const page = await getFavoriteTracks(userId, offsetRef.current, PAGE_SIZE);
       setTracks((prev) => [...prev, ...page.items]);
       setTotalTracks(page.totalNumberOfItems);
       offsetRef.current += page.items.length;
@@ -81,7 +93,7 @@ export default function FavoritesView({ onBack }: FavoritesViewProps) {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, getFavoriteTracks]);
+  }, [loadingMore, authTokens?.user_id]);
 
   const handlePlayTrack = async (track: Track, index: number) => {
     try {

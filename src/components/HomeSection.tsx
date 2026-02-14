@@ -1,7 +1,12 @@
 import { useRef, useState, useCallback } from "react";
 import { Play, ChevronLeft, ChevronRight, User, Music } from "lucide-react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type HomeSection as HomeSectionType, type MediaItemType } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useNavigation } from "../hooks/useNavigation";
+import {
+  getTidalImageUrl,
+  type HomeSection as HomeSectionType,
+  type MediaItemType,
+} from "../types";
 import MediaContextMenu from "./MediaContextMenu";
 
 // Helpers for extracting data from the raw JSON items
@@ -17,15 +22,27 @@ function getItemImage(item: any, size: number = 320): string {
     }
   }
   // V2 mix images (array of {url, width, height})
-  if (item.mixImages && Array.isArray(item.mixImages) && item.mixImages.length > 0) {
+  if (
+    item.mixImages &&
+    Array.isArray(item.mixImages) &&
+    item.mixImages.length > 0
+  ) {
     return item.mixImages[0]?.url || "";
   }
   // V2 detail images
-  if (item.detailImages && typeof item.detailImages === "object" && !Array.isArray(item.detailImages)) {
+  if (
+    item.detailImages &&
+    typeof item.detailImages === "object" &&
+    !Array.isArray(item.detailImages)
+  ) {
     if (item.detailImages.MEDIUM?.url) return item.detailImages.MEDIUM.url;
     if (item.detailImages.SMALL?.url) return item.detailImages.SMALL.url;
   }
-  if (item.detailMixImages && Array.isArray(item.detailMixImages) && item.detailMixImages.length > 0) {
+  if (
+    item.detailMixImages &&
+    Array.isArray(item.detailMixImages) &&
+    item.detailMixImages.length > 0
+  ) {
     return item.detailMixImages[0]?.url || "";
   }
   // Album/playlist cover UUID
@@ -40,7 +57,11 @@ function getItemImage(item: any, size: number = 320): string {
   if (item.imageUrl) return item.imageUrl;
   // Video items
   if (item.imageId) return getTidalImageUrl(item.imageId, size);
-  if (item.imagePath) return `https://resources.tidal.com/images/${item.imagePath.replace(/-/g, "/")}/${size}x${size}.jpg`;
+  if (item.imagePath)
+    return `https://resources.tidal.com/images/${item.imagePath.replace(
+      /-/g,
+      "/"
+    )}/${size}x${size}.jpg`;
   return "";
 }
 
@@ -58,14 +79,17 @@ function getItemSubtitle(item: any): string {
   if (item.subTitleTextInfo?.text) return item.subTitleTextInfo.text;
   if (item.shortSubtitleTextInfo?.text) return item.shortSubtitleTextInfo.text;
   if (item.artist?.name) return item.artist.name;
-  if (item.artists && item.artists.length > 0) return item.artists.map((a: any) => a.name).join(", ");
+  if (item.artists && item.artists.length > 0)
+    return item.artists.map((a: any) => a.name).join(", ");
   if (item.creator?.name) return `By ${item.creator.name}`;
   if (item.description) return item.description;
   return "";
 }
 
 function getItemId(item: any): string {
-  return item.id?.toString() || item.uuid || item.mixId || Math.random().toString(36);
+  return (
+    item.id?.toString() || item.uuid || item.mixId || Math.random().toString(36)
+  );
 }
 
 function getItemType(item: any): string {
@@ -73,22 +97,34 @@ function getItemType(item: any): string {
 }
 
 function isArtistItem(item: any, sectionType: string): boolean {
-  return sectionType === "ARTIST_LIST"
-    || getItemType(item) === "ARTIST"
-    || (item.picture !== undefined && !item.cover && !item.album && !item.images && !item.mixType);
+  return (
+    sectionType === "ARTIST_LIST" ||
+    getItemType(item) === "ARTIST" ||
+    (item.picture !== undefined &&
+      !item.cover &&
+      !item.album &&
+      !item.images &&
+      !item.mixType)
+  );
 }
 
 function isTrackItem(item: any, sectionType: string): boolean {
-  return sectionType === "TRACK_LIST"
-    || getItemType(item) === "TRACK"
-    || (item.duration !== undefined && item.artist !== undefined && item.album !== undefined);
+  return (
+    sectionType === "TRACK_LIST" ||
+    getItemType(item) === "TRACK" ||
+    (item.duration !== undefined &&
+      item.artist !== undefined &&
+      item.album !== undefined)
+  );
 }
 
 function isMixItem(item: any, sectionType: string): boolean {
-  return sectionType === "MIX_LIST"
-    || getItemType(item) === "MIX"
-    || item.mixType !== undefined
-    || item.mixImages !== undefined;
+  return (
+    sectionType === "MIX_LIST" ||
+    getItemType(item) === "MIX" ||
+    item.mixType !== undefined ||
+    item.mixImages !== undefined
+  );
 }
 
 interface HomeSectionProps {
@@ -96,15 +132,14 @@ interface HomeSectionProps {
 }
 
 export default function HomeSection({ section }: HomeSectionProps) {
+  const { playTrack, setQueueTracks } = usePlayback();
   const {
     navigateToAlbum,
     navigateToPlaylist,
     navigateToViewAll,
     navigateToArtist,
     navigateToMix,
-    playTrack,
-    setQueueTracks,
-  } = useAudioContext();
+  } = useNavigation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
@@ -141,7 +176,9 @@ export default function HomeSection({ section }: HomeSectionProps) {
           uuid: item.uuid,
           title: item.title || getItemTitle(item),
           image: item.squareImage || item.image,
-          creatorName: item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
+          creatorName:
+            item.creator?.name ||
+            (item.creator?.id === 0 ? "TIDAL" : undefined),
         };
       } else if (item.id && !isTrackItem(item, section.sectionType)) {
         // Album
@@ -157,7 +194,10 @@ export default function HomeSection({ section }: HomeSectionProps) {
       if (mediaItem) {
         e.preventDefault();
         e.stopPropagation();
-        setContextMenu({ item: mediaItem, position: { x: e.clientX, y: e.clientY } });
+        setContextMenu({
+          item: mediaItem,
+          position: { x: e.clientX, y: e.clientY },
+        });
       }
     },
     [section.sectionType]
@@ -187,7 +227,9 @@ export default function HomeSection({ section }: HomeSectionProps) {
     if (isTrackItem(item, section.sectionType)) {
       // Play the track
       const trackIndex = items.indexOf(item);
-      const remainingTracks = items.slice(trackIndex + 1).filter((t: any) => isTrackItem(t, section.sectionType));
+      const remainingTracks = items
+        .slice(trackIndex + 1)
+        .filter((t: any) => isTrackItem(t, section.sectionType));
       setQueueTracks(remainingTracks);
       playTrack(item);
     } else if (isMixItem(item, section.sectionType)) {
@@ -215,7 +257,8 @@ export default function HomeSection({ section }: HomeSectionProps) {
         title: item.title,
         image: item.squareImage || item.image,
         description: item.description,
-        creatorName: item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
+        creatorName:
+          item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
         numberOfTracks: item.numberOfTracks,
       });
     } else if (item.id) {
@@ -327,18 +370,30 @@ export default function HomeSection({ section }: HomeSectionProps) {
                       }}
                       className="absolute bottom-2 right-2 w-10 h-10 bg-[#00FFFF] rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-[opacity,transform] duration-300 scale-90 group-hover:scale-100 hover:scale-110"
                     >
-                      <Play size={20} fill="black" className="text-black ml-1" />
+                      <Play
+                        size={20}
+                        fill="black"
+                        className="text-black ml-1"
+                      />
                     </button>
                   </>
                 )}
               </div>
               {/* Title */}
-              <h4 className={`font-bold text-[14px] text-white truncate mb-1 ${isArtist ? "text-center" : ""}`}>
+              <h4
+                className={`font-bold text-[14px] text-white truncate mb-1 ${
+                  isArtist ? "text-center" : ""
+                }`}
+              >
                 {getItemTitle(item)}
               </h4>
               {/* Subtitle */}
               {getItemSubtitle(item) && (
-                <p className={`text-[12px] text-[#a6a6a6] line-clamp-2 ${isArtist ? "text-center" : ""}`}>
+                <p
+                  className={`text-[12px] text-[#a6a6a6] line-clamp-2 ${
+                    isArtist ? "text-center" : ""
+                  }`}
+                >
                   {getItemSubtitle(item)}
                 </p>
               )}
@@ -367,8 +422,8 @@ function TrackListSection({
   section: HomeSectionType;
   items: any[];
 }) {
-  const { navigateToAlbum, navigateToViewAll, playTrack, setQueueTracks } =
-    useAudioContext();
+  const { playTrack, setQueueTracks } = usePlayback();
+  const { navigateToAlbum, navigateToViewAll } = useNavigation();
 
   const handlePlayTrack = (item: any, index: number) => {
     const remainingTracks = items.slice(index + 1);
@@ -422,7 +477,11 @@ function TrackListSection({
                       </div>
                     )}
                     <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Play size={14} fill="white" className="text-white ml-0.5" />
+                      <Play
+                        size={14}
+                        fill="white"
+                        className="text-white ml-0.5"
+                      />
                     </div>
                   </div>
                   <div className="flex-1 min-w-0">

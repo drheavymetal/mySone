@@ -1,9 +1,9 @@
 import { LogOut, User } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
+import { useAuth } from "../hooks/useAuth";
 
 export default function UserMenu() {
-  const { userName, logout } = useAudioContext();
+  const { userName, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 

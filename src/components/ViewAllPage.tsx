@@ -1,21 +1,35 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ArrowLeft, Play, User, Music } from "lucide-react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type MediaItemType } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useNavigation } from "../hooks/useNavigation";
+import { getPageSection } from "../api/tidal";
+import { getTidalImageUrl, type MediaItemType } from "../types";
 import MediaContextMenu from "./MediaContextMenu";
 
 // Helpers for extracting data from items (handles V1 and V2 formats)
 function getItemImage(item: any, size: number = 320): string {
-  if (item.images && typeof item.images === "object" && !Array.isArray(item.images)) {
+  if (
+    item.images &&
+    typeof item.images === "object" &&
+    !Array.isArray(item.images)
+  ) {
     if (size <= 320 && item.images.SMALL?.url) return item.images.SMALL.url;
     if (size <= 640 && item.images.MEDIUM?.url) return item.images.MEDIUM.url;
     if (item.images.LARGE?.url) return item.images.LARGE.url;
     if (item.images.SMALL?.url) return item.images.SMALL.url;
   }
-  if (item.mixImages && Array.isArray(item.mixImages) && item.mixImages.length > 0) {
+  if (
+    item.mixImages &&
+    Array.isArray(item.mixImages) &&
+    item.mixImages.length > 0
+  ) {
     return item.mixImages[0]?.url || "";
   }
-  if (item.detailMixImages && Array.isArray(item.detailMixImages) && item.detailMixImages.length > 0) {
+  if (
+    item.detailMixImages &&
+    Array.isArray(item.detailMixImages) &&
+    item.detailMixImages.length > 0
+  ) {
     return item.detailMixImages[0]?.url || "";
   }
   if (item.cover) return getTidalImageUrl(item.cover, size);
@@ -40,14 +54,17 @@ function getItemSubtitle(item: any): string {
   if (item.subtitleTextInfo?.text) return item.subtitleTextInfo.text;
   if (item.subTitleTextInfo?.text) return item.subTitleTextInfo.text;
   if (item.artist?.name) return item.artist.name;
-  if (item.artists && item.artists.length > 0) return item.artists.map((a: any) => a.name).join(", ");
+  if (item.artists && item.artists.length > 0)
+    return item.artists.map((a: any) => a.name).join(", ");
   if (item.creator?.name) return `By ${item.creator.name}`;
   if (item.description) return item.description;
   return "";
 }
 
 function getItemId(item: any): string {
-  return item.id?.toString() || item.uuid || item.mixId || Math.random().toString(36);
+  return (
+    item.id?.toString() || item.uuid || item.mixId || Math.random().toString(36)
+  );
 }
 
 function getItemType(item: any): string {
@@ -55,13 +72,21 @@ function getItemType(item: any): string {
 }
 
 function isArtistItem(item: any): boolean {
-  return getItemType(item) === "ARTIST"
-    || (item.picture !== undefined && !item.cover && !item.album && !item.images && !item.mixType);
+  return (
+    getItemType(item) === "ARTIST" ||
+    (item.picture !== undefined &&
+      !item.cover &&
+      !item.album &&
+      !item.images &&
+      !item.mixType)
+  );
 }
 
 function isTrackItem(item: any): boolean {
-  return getItemType(item) === "TRACK"
-    || (item.duration !== undefined && item.artist !== undefined);
+  return (
+    getItemType(item) === "TRACK" ||
+    (item.duration !== undefined && item.artist !== undefined)
+  );
 }
 
 interface ViewAllPageProps {
@@ -70,14 +95,13 @@ interface ViewAllPageProps {
   onBack: () => void;
 }
 
-export default function ViewAllPage({ title, apiPath, onBack }: ViewAllPageProps) {
-  const {
-    getPageSection,
-    navigateToAlbum,
-    navigateToPlaylist,
-    playTrack,
-    setQueueTracks,
-  } = useAudioContext();
+export default function ViewAllPage({
+  title,
+  apiPath,
+  onBack,
+}: ViewAllPageProps) {
+  const { playTrack, setQueueTracks } = usePlayback();
+  const { navigateToAlbum, navigateToPlaylist } = useNavigation();
 
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,38 +114,39 @@ export default function ViewAllPage({ title, apiPath, onBack }: ViewAllPageProps
     position: { x: number; y: number };
   } | null>(null);
 
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, item: any) => {
-      let mediaItem: MediaItemType | null = null;
+  const handleContextMenu = useCallback((e: React.MouseEvent, item: any) => {
+    let mediaItem: MediaItemType | null = null;
 
-      if (isArtistItem(item)) {
-        return; // Artists don't get a context menu
-      } else if (item.uuid) {
-        mediaItem = {
-          type: "playlist",
-          uuid: item.uuid,
-          title: item.title || getItemTitle(item),
-          image: item.squareImage || item.image,
-          creatorName: item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
-        };
-      } else if (item.id && !isTrackItem(item)) {
-        mediaItem = {
-          type: "album",
-          id: item.id,
-          title: item.title || getItemTitle(item),
-          cover: item.cover,
-          artistName: item.artist?.name || item.artists?.[0]?.name,
-        };
-      }
+    if (isArtistItem(item)) {
+      return; // Artists don't get a context menu
+    } else if (item.uuid) {
+      mediaItem = {
+        type: "playlist",
+        uuid: item.uuid,
+        title: item.title || getItemTitle(item),
+        image: item.squareImage || item.image,
+        creatorName:
+          item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
+      };
+    } else if (item.id && !isTrackItem(item)) {
+      mediaItem = {
+        type: "album",
+        id: item.id,
+        title: item.title || getItemTitle(item),
+        cover: item.cover,
+        artistName: item.artist?.name || item.artists?.[0]?.name,
+      };
+    }
 
-      if (mediaItem) {
-        e.preventDefault();
-        e.stopPropagation();
-        setContextMenu({ item: mediaItem, position: { x: e.clientX, y: e.clientY } });
-      }
-    },
-    []
-  );
+    if (mediaItem) {
+      e.preventDefault();
+      e.stopPropagation();
+      setContextMenu({
+        item: mediaItem,
+        position: { x: e.clientX, y: e.clientY },
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (hasLoadedRef.current) return;
@@ -155,7 +180,8 @@ export default function ViewAllPage({ title, apiPath, onBack }: ViewAllPageProps
         title: item.title,
         image: item.squareImage || item.image,
         description: item.description,
-        creatorName: item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
+        creatorName:
+          item.creator?.name || (item.creator?.id === 0 ? "TIDAL" : undefined),
         numberOfTracks: item.numberOfTracks,
       });
     } else if (item.id && !isArtistItem(item)) {
@@ -256,7 +282,11 @@ export default function ViewAllPage({ title, apiPath, onBack }: ViewAllPageProps
                           }}
                           className="absolute bottom-2 right-2 w-10 h-10 bg-[#00FFFF] rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-[opacity,transform] duration-300 scale-90 group-hover:scale-100 hover:scale-110"
                         >
-                          <Play size={20} fill="black" className="text-black ml-1" />
+                          <Play
+                            size={20}
+                            fill="black"
+                            className="text-black ml-1"
+                          />
                         </button>
                       </>
                     )}

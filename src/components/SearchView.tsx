@@ -1,6 +1,15 @@
-import { Play, Music, Loader2, Search, MoreHorizontal, User } from "lucide-react";
+import {
+  Play,
+  Music,
+  Loader2,
+  Search,
+  MoreHorizontal,
+  User,
+} from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
+import { usePlayback } from "../hooks/usePlayback";
+import { useNavigation } from "../hooks/useNavigation";
+import { searchTidal } from "../api/tidal";
 import {
   getTidalImageUrl,
   type SearchResults,
@@ -9,12 +18,18 @@ import {
   type Playlist,
   type DirectHitItem,
   type MediaItemType,
-} from "../hooks/useAudio";
+} from "../types";
 import TidalImage from "./TidalImage";
 import MediaContextMenu from "./MediaContextMenu";
 import ReusableTrackList from "./TrackList";
 
-type SearchTab = "all" | "tophits" | "tracks" | "playlists" | "albums" | "artists";
+type SearchTab =
+  | "all"
+  | "tophits"
+  | "tracks"
+  | "playlists"
+  | "albums"
+  | "artists";
 
 const TABS: { id: SearchTab; label: string }[] = [
   { id: "all", label: "All Results" },
@@ -31,14 +46,12 @@ interface SearchViewProps {
 }
 
 export default function SearchView({ query, onBack }: SearchViewProps) {
+  const { playTrack, setQueueTracks } = usePlayback();
   const {
-    playTrack,
-    setQueueTracks,
     navigateToAlbum,
     navigateToPlaylist,
     navigateToArtist,
-    searchTidal,
-  } = useAudioContext();
+  } = useNavigation();
 
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,7 +92,8 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
           uuid: pl.uuid,
           title: pl.title,
           image: pl.image,
-          creatorName: pl.creator?.name || (pl.creator?.id === 0 ? "TIDAL" : undefined),
+          creatorName:
+            pl.creator?.name || (pl.creator?.id === 0 ? "TIDAL" : undefined),
         },
         position: { x: e.clientX, y: e.clientY },
       });
@@ -254,20 +268,41 @@ export default function SearchView({ query, onBack }: SearchViewProps) {
                     id: hit.id || 0,
                     title: hit.title || "",
                     duration: hit.duration || 0,
-                    artist: hit.artistName ? { id: 0, name: hit.artistName } : undefined,
-                    album: hit.albumId ? { id: hit.albumId, title: hit.albumTitle || "", cover: hit.albumCover } : undefined,
+                    artist: hit.artistName
+                      ? { id: 0, name: hit.artistName }
+                      : undefined,
+                    album: hit.albumId
+                      ? {
+                          id: hit.albumId,
+                          title: hit.albumTitle || "",
+                          cover: hit.albumCover,
+                        }
+                      : undefined,
                   };
                   setQueueTracks([]);
                   playTrack(trackObj);
                 }}
                 onAlbumClick={(hit) => {
-                  if (hit.id) navigateToAlbum(hit.id, { title: hit.title || "", cover: hit.cover, artistName: hit.artistName });
+                  if (hit.id)
+                    navigateToAlbum(hit.id, {
+                      title: hit.title || "",
+                      cover: hit.cover,
+                      artistName: hit.artistName,
+                    });
                 }}
                 onArtistClick={(hit) => {
-                  if (hit.id) navigateToArtist(hit.id, { name: hit.name || "", picture: hit.picture });
+                  if (hit.id)
+                    navigateToArtist(hit.id, {
+                      name: hit.name || "",
+                      picture: hit.picture,
+                    });
                 }}
                 onPlaylistClick={(hit) => {
-                  if (hit.uuid) navigateToPlaylist(hit.uuid, { title: hit.title || "", image: hit.image });
+                  if (hit.uuid)
+                    navigateToPlaylist(hit.uuid, {
+                      title: hit.title || "",
+                      image: hit.image,
+                    });
                 }}
               />
             )}
@@ -341,7 +376,11 @@ function ArtistGrid({
   large = false,
 }: {
   artists: { id: number; name: string; picture?: string }[];
-  onArtistClick: (artist: { id: number; name: string; picture?: string }) => void;
+  onArtistClick: (artist: {
+    id: number;
+    name: string;
+    picture?: string;
+  }) => void;
   large?: boolean;
 }) {
   return (
@@ -417,7 +456,9 @@ function AlbumGrid({
               artistName: album.artist?.name,
             })
           }
-          onContextMenu={onContextMenu ? (e) => onContextMenu(e, album) : undefined}
+          onContextMenu={
+            onContextMenu ? (e) => onContextMenu(e, album) : undefined
+          }
           className="p-3 bg-[#181818] hover:bg-[#282828] rounded-md cursor-pointer group transition-[background-color] duration-300"
         >
           <div className="aspect-square w-full rounded-md mb-3 relative overflow-hidden shadow-lg bg-[#282828]">
@@ -554,7 +595,9 @@ function TopHitsList({
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[14px] text-white truncate font-medium">{hit.name}</p>
+                <p className="text-[14px] text-white truncate font-medium">
+                  {hit.name}
+                </p>
                 <p className="text-[12px] text-[#808080]">Artist</p>
               </div>
             </button>
@@ -584,7 +627,8 @@ function TopHitsList({
               <div className="flex-1 min-w-0">
                 <p className="text-[14px] text-white truncate">{hit.title}</p>
                 <p className="text-[12px] text-[#808080] truncate">
-                  Playlist{hit.numberOfTracks ? ` · ${hit.numberOfTracks} tracks` : ""}
+                  Playlist
+                  {hit.numberOfTracks ? ` · ${hit.numberOfTracks} tracks` : ""}
                 </p>
               </div>
             </button>
@@ -632,11 +676,15 @@ function PlaylistGrid({
               title: pl.title,
               image: pl.image,
               description: pl.description,
-              creatorName: pl.creator?.name || (pl.creator?.id === 0 ? "TIDAL" : undefined),
+              creatorName:
+                pl.creator?.name ||
+                (pl.creator?.id === 0 ? "TIDAL" : undefined),
               numberOfTracks: pl.numberOfTracks,
             })
           }
-          onContextMenu={onContextMenu ? (e) => onContextMenu(e, pl) : undefined}
+          onContextMenu={
+            onContextMenu ? (e) => onContextMenu(e, pl) : undefined
+          }
           className="p-3 bg-[#181818] hover:bg-[#282828] rounded-md cursor-pointer group transition-[background-color] duration-300"
         >
           <div className="aspect-square w-full rounded-md mb-3 relative overflow-hidden shadow-lg bg-[#282828]">
@@ -672,7 +720,12 @@ function PlaylistGrid({
             {pl.title}
           </h4>
           <p className="text-[13px] text-[#a6a6a6] line-clamp-1">
-            {pl.description || (pl.creator?.name ? `By ${pl.creator.name}` : pl.creator?.id === 0 ? "By TIDAL" : "Playlist")}
+            {pl.description ||
+              (pl.creator?.name
+                ? `By ${pl.creator.name}`
+                : pl.creator?.id === 0
+                ? "By TIDAL"
+                : "Playlist")}
           </p>
           {pl.numberOfTracks != null && (
             <p className="text-[12px] text-[#666] mt-0.5">

@@ -6,12 +6,10 @@ import {
   Heart,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import {
-  getTidalImageUrl,
-  type Track,
-  type AlbumDetail,
-} from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useFavorites } from "../hooks/useFavorites";
+import { getAlbumDetail, getAlbumTracks } from "../api/tidal";
+import { getTidalImageUrl, type Track, type AlbumDetail } from "../types";
 import TidalImage from "./TidalImage";
 import TrackList from "./TrackList";
 
@@ -38,18 +36,15 @@ export default function AlbumView({
   onBack,
 }: AlbumViewProps) {
   const {
-    getAlbumDetail,
-    getAlbumTracks,
     playTrack,
     setQueueTracks,
     currentTrack,
     isPlaying,
     pauseTrack,
     resumeTrack,
-    isAlbumFavorited,
-    addFavoriteAlbum,
-    removeFavoriteAlbum,
-  } = useAudioContext();
+  } = usePlayback();
+  const { isAlbumFavorited, addFavoriteAlbum, removeFavoriteAlbum } =
+    useFavorites();
 
   const [album, setAlbum] = useState<AlbumDetail | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -114,7 +109,7 @@ export default function AlbumView({
     return () => {
       cancelled = true;
     };
-  }, [albumId, getAlbumDetail, getAlbumTracks]);
+  }, [albumId, isAlbumFavorited]);
 
   // Load more tracks (infinite scroll)
   const loadMore = useCallback(async () => {
@@ -132,7 +127,7 @@ export default function AlbumView({
     } finally {
       setLoadingMore(false);
     }
-  }, [albumId, loadingMore, getAlbumTracks]);
+  }, [albumId, loadingMore]);
 
   const handlePlayTrack = async (track: Track, index: number) => {
     try {

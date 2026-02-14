@@ -1,10 +1,14 @@
 import { Play, Heart, MoreHorizontal, Plus, Loader2 } from "lucide-react";
-import { type Track, getTidalImageUrl } from "../hooks/useAudio";
+import { type Track, getTidalImageUrl } from "../types";
 import TidalImage from "./TidalImage";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 import TrackContextMenu from "./TrackContextMenu";
-import { useAudioContext } from "../contexts/AudioContext";
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, memo } from "react";
+import { useAtomValue } from "jotai";
+import { currentTrackAtom, isPlayingAtom } from "../atoms/playback";
+import { favoriteTrackIdsAtom } from "../atoms/favorites";
+import { useNavigation } from "../hooks/useNavigation";
+import { useFavorites } from "../hooks/useFavorites";
 
 interface TrackListProps {
   tracks: Track[];
@@ -43,6 +47,274 @@ function formatDate(dateString?: string): string {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// ─── Memoized TrackRow ─────────────────────────────────────────────────────
+
+interface TrackRowProps {
+  track: Track;
+  index: number;
+  gridCols: string;
+  showCover: boolean;
+  showArtist: boolean;
+  showAlbum: boolean;
+  showDateAdded: boolean;
+  context: string;
+  onPlay: (track: Track, index: number) => void;
+  playlistId?: string;
+  isUserPlaylist?: boolean;
+  onTrackRemoved?: (index: number) => void;
+}
+
+const TrackRow = memo(function TrackRow({
+  track,
+  index,
+  gridCols,
+  showCover,
+  showArtist,
+  showAlbum,
+  showDateAdded,
+  context,
+  onPlay,
+  playlistId,
+  isUserPlaylist,
+  onTrackRemoved,
+}: TrackRowProps) {
+  const currentTrack = useAtomValue(currentTrackAtom);
+  const isPlaying = useAtomValue(isPlayingAtom);
+  const favoriteTrackIds = useAtomValue(favoriteTrackIdsAtom);
+  const { navigateToAlbum, navigateToArtist } = useNavigation();
+  const { addFavoriteTrack, removeFavoriteTrack } = useFavorites();
+
+  const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuCursorPos, setContextMenuCursorPos] = useState<{ x: number; y: number } | undefined>(undefined);
+  const plusButtonRef = useRef<HTMLButtonElement>(null);
+  const dotsButtonRef = useRef<HTMLButtonElement>(null);
+
+  const isActive = currentTrack?.id === track.id;
+  const playing = isActive && isPlaying;
+  const isFav = favoriteTrackIds.has(track.id);
+
+  const toggleFavorite = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (isFav) {
+        await removeFavoriteTrack(track.id);
+      } else {
+        await addFavoriteTrack(track.id);
+      }
+    } catch (err) {
+      console.error("Failed to toggle favorite", err);
+    }
+  };
+
+  const handlePlusClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setContextMenuOpen(false);
+    setPlaylistMenuOpen((prev) => !prev);
+  };
+
+  const handleDotsClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPlaylistMenuOpen(false);
+    setContextMenuCursorPos(undefined);
+    setContextMenuOpen((prev) => !prev);
+  };
+
+  const handleRowContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPlaylistMenuOpen(false);
+    setContextMenuCursorPos({ x: e.clientX, y: e.clientY });
+    setContextMenuOpen(true);
+  };
+
+  return (
+    <div
+      onClick={() => onPlay(track, index)}
+      onContextMenu={handleRowContextMenu}
+      className={`grid gap-4 px-4 py-2.5 rounded-md cursor-pointer group transition-colors items-center ${
+        isActive ? "bg-[#ffffff0a]" : "hover:bg-[#ffffff08]"
+      }`}
+      style={{ gridTemplateColumns: gridCols }}
+    >
+      {/* Track Number / Playing Indicator */}
+      <div className="flex items-center justify-end">
+        {playing ? (
+          <div className="flex items-end gap-[3px] h-4">
+            <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" />
+            <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.2s" }} />
+            <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.4s" }} />
+          </div>
+        ) : (
+          <>
+            <span
+              className={`text-[15px] tabular-nums group-hover:hidden ${
+                isActive ? "text-[#00FFFF]" : "text-[#a6a6a6]"
+              }`}
+            >
+              {context === "album" ? (track.trackNumber ?? index + 1) : index + 1}
+            </span>
+            <Play
+              size={14}
+              fill="white"
+              className="text-white hidden group-hover:block"
+            />
+          </>
+        )}
+      </div>
+
+      {/* Title + Thumbnail */}
+      <div className="flex items-center gap-3 min-w-0">
+        {showCover && (
+          <div className="relative w-10 h-10 shrink-0 rounded bg-[#282828] overflow-hidden">
+            <TidalImage
+              src={getTidalImageUrl(track.album?.cover, 160)}
+              alt={track.album?.title || track.title}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+        <div className="flex flex-col justify-center min-w-0">
+          <span
+            className={`text-[15px] font-medium truncate leading-snug ${
+              isActive ? "text-[#00FFFF]" : "text-white"
+            }`}
+          >
+            {track.title}
+          </span>
+          {!showArtist && (
+             <span
+               className="text-[13px] text-[#a6a6a6] truncate leading-snug hover:text-white hover:underline transition-colors cursor-pointer"
+               onClick={(e) => {
+                 e.stopPropagation();
+                 if (track.artist?.id) {
+                   navigateToArtist(track.artist.id, {
+                     name: track.artist.name,
+                     picture: track.artist.picture,
+                   });
+                 }
+               }}
+             >
+               {track.artist?.name || "Unknown Artist"}
+             </span>
+          )}
+        </div>
+      </div>
+
+      {/* Artist (Column) */}
+      {showArtist && (
+        <div className="flex items-center min-w-0">
+          <span
+            className="text-[14px] text-[#a6a6a6] truncate hover:text-white hover:underline transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (track.artist?.id) {
+                navigateToArtist(track.artist.id, {
+                  name: track.artist.name,
+                  picture: track.artist.picture,
+                });
+              }
+            }}
+          >
+            {track.artist?.name || "Unknown Artist"}
+          </span>
+        </div>
+      )}
+
+      {/* Album */}
+      {showAlbum && (
+        <div className="flex items-center min-w-0">
+          <span
+            className="text-[14px] text-[#a6a6a6] truncate hover:text-white hover:underline transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (track.album?.id) {
+                navigateToAlbum(track.album.id, {
+                  title: track.album.title,
+                  cover: track.album.cover,
+                  artistName: track.artist?.name,
+                });
+              }
+            }}
+          >
+            {track.album?.title || ""}
+          </span>
+        </div>
+      )}
+
+      {/* Date Added */}
+      {showDateAdded && (
+        <div className="flex items-center min-w-0">
+          <span className="text-[14px] text-[#a6a6a6] truncate">
+            {formatDate(track.dateAdded)}
+          </span>
+        </div>
+      )}
+
+      {/* Duration */}
+      <div className="flex items-center justify-end text-[14px] text-[#a6a6a6] tabular-nums">
+        {formatDuration(track.duration)}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          ref={dotsButtonRef}
+          className={`p-1.5 rounded-full transition-colors ${
+            contextMenuOpen
+              ? "text-white opacity-100"
+              : "text-[#a6a6a6] hover:text-white opacity-0 group-hover:opacity-100"
+          }`}
+          title="More options"
+          onClick={handleDotsClick}
+        >
+          <MoreHorizontal size={18} />
+        </button>
+        {contextMenuOpen && (
+          <TrackContextMenu
+            track={track}
+            index={index}
+            anchorRef={dotsButtonRef}
+            cursorPosition={contextMenuCursorPos}
+            onClose={() => setContextMenuOpen(false)}
+            playlistId={playlistId}
+            isUserPlaylist={isUserPlaylist}
+            onTrackRemoved={onTrackRemoved}
+          />
+        )}
+        <button
+          ref={plusButtonRef}
+          className={`p-1.5 rounded-full transition-colors ${
+            playlistMenuOpen
+              ? "text-[#00FFFF]"
+              : "text-[#a6a6a6] hover:text-white"
+          }`}
+          title="Add to playlist"
+          onClick={handlePlusClick}
+        >
+          <Plus size={18} />
+        </button>
+        {playlistMenuOpen && (
+          <AddToPlaylistMenu
+            trackIds={[track.id]}
+            anchorRef={plusButtonRef}
+            onClose={() => setPlaylistMenuOpen(false)}
+          />
+        )}
+        <button 
+          className={`p-1.5 rounded-full transition-colors ${isFav ? 'text-[#00FFFF]' : 'text-[#a6a6a6] hover:text-white'}`}
+          title={isFav ? "Remove from favorites" : "Add to favorites"}
+          onClick={toggleFavorite}
+        >
+          <Heart size={18} fill={isFav ? "currentColor" : "none"} />
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// ─── TrackList ─────────────────────────────────────────────────────────────
+
 export default function TrackList({
   tracks,
   onPlay,
@@ -58,70 +330,8 @@ export default function TrackList({
   isUserPlaylist,
   onTrackRemoved,
 }: TrackListProps) {
-  const {
-    currentTrack,
-    isPlaying,
-    navigateToAlbum,
-    navigateToArtist,
-    favoriteTrackIds,
-    addFavoriteTrack,
-    removeFavoriteTrack,
-  } = useAudioContext();
-
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
-  const [playlistMenuTrackId, setPlaylistMenuTrackId] = useState<number | null>(null);
-  const plusButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
-  const [contextMenuTrackId, setContextMenuTrackId] = useState<number | null>(null);
-  const [contextMenuTrackIndex, setContextMenuTrackIndex] = useState<number>(0);
-  const [contextMenuCursorPos, setContextMenuCursorPos] = useState<{ x: number; y: number } | undefined>(undefined);
-  const dotsButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
-
-  const handlePlusClick = useCallback((e: React.MouseEvent, track: Track) => {
-    e.stopPropagation();
-    setContextMenuTrackId(null);
-    setPlaylistMenuTrackId((prev) => (prev === track.id ? null : track.id));
-  }, []);
-
-  const closePlaylistMenu = useCallback(() => {
-    setPlaylistMenuTrackId(null);
-  }, []);
-
-  const handleDotsClick = useCallback((e: React.MouseEvent, track: Track, index: number) => {
-    e.stopPropagation();
-    setPlaylistMenuTrackId(null);
-    setContextMenuCursorPos(undefined); // use anchor-based positioning
-    setContextMenuTrackIndex(index);
-    setContextMenuTrackId((prev) => (prev === track.id ? null : track.id));
-  }, []);
-
-  const handleRowContextMenu = useCallback((e: React.MouseEvent, track: Track, index: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setPlaylistMenuTrackId(null);
-    setContextMenuCursorPos({ x: e.clientX, y: e.clientY }); // position at cursor
-    setContextMenuTrackIndex(index);
-    setContextMenuTrackId(track.id);
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenuTrackId(null);
-  }, []);
-
-  const toggleFavorite = async (e: React.MouseEvent, track: Track) => {
-    e.stopPropagation();
-    const isFav = favoriteTrackIds.has(track.id);
-    
-    try {
-      if (isFav) {
-        await removeFavoriteTrack(track.id);
-      } else {
-        await addFavoriteTrack(track.id);
-      }
-    } catch (err) {
-      console.error("Failed to toggle favorite", err);
-    }
-  };
 
   useEffect(() => {
     if (!onLoadMore) return;
@@ -145,14 +355,6 @@ export default function TrackList({
 
     return () => observerRef.current?.disconnect();
   }, [hasMore, onLoadMore]);
-
-  const isCurrentlyPlaying = (track: Track) => {
-    return currentTrack?.id === track.id && isPlaying;
-  };
-
-  const isCurrentTrackRow = (track: Track) => {
-    return currentTrack?.id === track.id;
-  };
 
   // Build grid columns string
   const gridCols = [
@@ -183,202 +385,23 @@ export default function TrackList({
 
       {/* Track Rows */}
       <div className="flex flex-col">
-        {tracks.map((track, index) => {
-          const isActive = isCurrentTrackRow(track);
-          const playing = isCurrentlyPlaying(track);
-          const isFav = favoriteTrackIds.has(track.id);
-
-          return (
-            <div
-              key={`${track.id}-${index}`}
-              onClick={() => onPlay(track, index)}
-              onContextMenu={(e) => handleRowContextMenu(e, track, index)}
-              className={`grid gap-4 px-4 py-2.5 rounded-md cursor-pointer group transition-colors items-center ${
-                isActive ? "bg-[#ffffff0a]" : "hover:bg-[#ffffff08]"
-              }`}
-              style={{ gridTemplateColumns: gridCols }}
-            >
-              {/* Track Number / Playing Indicator */}
-              <div className="flex items-center justify-end">
-                {playing ? (
-                  <div className="flex items-end gap-[3px] h-4">
-                    <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" />
-                    <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.2s" }} />
-                    <span className="w-[3px] h-full bg-[#00FFFF] rounded-full playing-bar" style={{ animationDelay: "0.4s" }} />
-                  </div>
-                ) : (
-                  <>
-                    <span
-                      className={`text-[15px] tabular-nums group-hover:hidden ${
-                        isActive ? "text-[#00FFFF]" : "text-[#a6a6a6]"
-                      }`}
-                    >
-                      {context === "album" ? (track.trackNumber ?? index + 1) : index + 1}
-                    </span>
-                    <Play
-                      size={14}
-                      fill="white"
-                      className="text-white hidden group-hover:block"
-                    />
-                  </>
-                )}
-              </div>
-
-              {/* Title + Thumbnail */}
-              <div className="flex items-center gap-3 min-w-0">
-                {showCover && (
-                  <div className="relative w-10 h-10 shrink-0 rounded bg-[#282828] overflow-hidden">
-                    <TidalImage
-                      src={getTidalImageUrl(track.album?.cover, 160)}
-                      alt={track.album?.title || track.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
-                <div className="flex flex-col justify-center min-w-0">
-                  <span
-                    className={`text-[15px] font-medium truncate leading-snug ${
-                      isActive ? "text-[#00FFFF]" : "text-white"
-                    }`}
-                  >
-                    {track.title}
-                  </span>
-                  {!showArtist && (
-                     <span
-                       className="text-[13px] text-[#a6a6a6] truncate leading-snug hover:text-white hover:underline transition-colors cursor-pointer"
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         if (track.artist?.id) {
-                           navigateToArtist(track.artist.id, {
-                             name: track.artist.name,
-                             picture: track.artist.picture,
-                           });
-                         }
-                       }}
-                     >
-                       {track.artist?.name || "Unknown Artist"}
-                     </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Artist (Column) */}
-              {showArtist && (
-                <div className="flex items-center min-w-0">
-                  <span
-                    className="text-[14px] text-[#a6a6a6] truncate hover:text-white hover:underline transition-colors cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (track.artist?.id) {
-                        navigateToArtist(track.artist.id, {
-                          name: track.artist.name,
-                          picture: track.artist.picture,
-                        });
-                      }
-                    }}
-                  >
-                    {track.artist?.name || "Unknown Artist"}
-                  </span>
-                </div>
-              )}
-
-              {/* Album */}
-              {showAlbum && (
-                <div className="flex items-center min-w-0">
-                  <span
-                    className="text-[14px] text-[#a6a6a6] truncate hover:text-white hover:underline transition-colors cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (track.album?.id) {
-                        navigateToAlbum(track.album.id, {
-                          title: track.album.title,
-                          cover: track.album.cover,
-                          artistName: track.artist?.name,
-                        });
-                      }
-                    }}
-                  >
-                    {track.album?.title || ""}
-                  </span>
-                </div>
-              )}
-
-              {/* Date Added */}
-              {showDateAdded && (
-                <div className="flex items-center min-w-0">
-                  <span className="text-[14px] text-[#a6a6a6] truncate">
-                    {formatDate(track.dateAdded)}
-                  </span>
-                </div>
-              )}
-
-              {/* Duration */}
-              <div className="flex items-center justify-end text-[14px] text-[#a6a6a6] tabular-nums">
-                {formatDuration(track.duration)}
-              </div>
-
-              {/* Actions: three dots on hover only, + and heart always visible */}
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  ref={(el) => {
-                    if (el) dotsButtonRefs.current.set(track.id, el);
-                    else dotsButtonRefs.current.delete(track.id);
-                  }}
-                  className={`p-1.5 rounded-full transition-colors ${
-                    contextMenuTrackId === track.id
-                      ? "text-white opacity-100"
-                      : "text-[#a6a6a6] hover:text-white opacity-0 group-hover:opacity-100"
-                  }`}
-                  title="More options"
-                  onClick={(e) => handleDotsClick(e, track, index)}
-                >
-                  <MoreHorizontal size={18} />
-                </button>
-                {contextMenuTrackId === track.id && (
-                  <TrackContextMenu
-                    track={track}
-                    index={contextMenuTrackIndex}
-                    anchorRef={{ current: dotsButtonRefs.current.get(track.id) ?? null }}
-                    cursorPosition={contextMenuCursorPos}
-                    onClose={closeContextMenu}
-                    playlistId={playlistId}
-                    isUserPlaylist={isUserPlaylist}
-                    onTrackRemoved={onTrackRemoved}
-                  />
-                )}
-                <button
-                  ref={(el) => {
-                    if (el) plusButtonRefs.current.set(track.id, el);
-                    else plusButtonRefs.current.delete(track.id);
-                  }}
-                  className={`p-1.5 rounded-full transition-colors ${
-                    playlistMenuTrackId === track.id
-                      ? "text-[#00FFFF]"
-                      : "text-[#a6a6a6] hover:text-white"
-                  }`}
-                  title="Add to playlist"
-                  onClick={(e) => handlePlusClick(e, track)}
-                >
-                  <Plus size={18} />
-                </button>
-                {playlistMenuTrackId === track.id && (
-                  <AddToPlaylistMenu
-                    trackIds={[track.id]}
-                    anchorRef={{ current: plusButtonRefs.current.get(track.id) ?? null }}
-                    onClose={closePlaylistMenu}
-                  />
-                )}
-                <button 
-                  className={`p-1.5 rounded-full transition-colors ${isFav ? 'text-[#00FFFF]' : 'text-[#a6a6a6] hover:text-white'}`}
-                  title={isFav ? "Remove from favorites" : "Add to favorites"}
-                  onClick={(e) => toggleFavorite(e, track)}
-                >
-                  <Heart size={18} fill={isFav ? "currentColor" : "none"} />
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        {tracks.map((track, index) => (
+          <TrackRow
+            key={`${track.id}-${index}`}
+            track={track}
+            index={index}
+            gridCols={gridCols}
+            showCover={showCover}
+            showArtist={showArtist}
+            showAlbum={showAlbum}
+            showDateAdded={showDateAdded}
+            context={context}
+            onPlay={onPlay}
+            playlistId={playlistId}
+            isUserPlaylist={isUserPlaylist}
+            onTrackRemoved={onTrackRemoved}
+          />
+        ))}
       </div>
 
       {/* Infinite Scroll Sentinel */}

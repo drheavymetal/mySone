@@ -1,7 +1,8 @@
 import { Play, Pause, Music, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { getPlaylistTracks } from "../api/tidal";
+import { getTidalImageUrl, type Track } from "../types";
 import TidalImage from "./TidalImage";
 import TrackList from "./TrackList";
 
@@ -24,14 +25,13 @@ export default function PlaylistView({
   onBack,
 }: PlaylistViewProps) {
   const {
-    getPlaylistTracks,
     playTrack,
     setQueueTracks,
     currentTrack,
     isPlaying,
     pauseTrack,
     resumeTrack,
-  } = useAudioContext();
+  } = usePlayback();
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +66,7 @@ export default function PlaylistView({
     return () => {
       cancelled = true;
     };
-  }, [playlistId, getPlaylistTracks]);
+  }, [playlistId]);
 
   const trackIds = useMemo(() => new Set(tracks.map((track) => track.id)), [tracks]);
 

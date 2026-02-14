@@ -1,26 +1,28 @@
 import { Play, Heart } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
+import { usePlaylists } from "../hooks/usePlaylists";
+import { useNavigation } from "../hooks/useNavigation";
+import { useAuth } from "../hooks/useAuth";
+import {
+  getHomePage,
+  refreshHomePage,
+  getFavoriteArtists,
+} from "../api/tidal";
 import {
   getTidalImageUrl,
   type Playlist,
   type HomeSection as HomeSectionType,
   type ArtistDetail,
   type MediaItemType,
-} from "../hooks/useAudio";
+} from "../types";
 import TidalImage from "./TidalImage";
 import HomeSection from "./HomeSection";
 import MediaContextMenu from "./MediaContextMenu";
 
 export default function Home() {
-  const {
-    userPlaylists,
-    navigateToPlaylist,
-    navigateToFavorites,
-    getHomePage,
-    refreshHomePage,
-    getFavoriteArtists,
-  } = useAudioContext();
+  const { userPlaylists } = usePlaylists();
+  const { navigateToPlaylist, navigateToFavorites } = useNavigation();
+  const { authTokens } = useAuth();
 
   const [sections, setSections] = useState<HomeSectionType[]>([]);
   const [favoriteArtists, setFavoriteArtists] = useState<ArtistDetail[]>([]);
@@ -90,8 +92,11 @@ export default function Home() {
 
       // Load favorite artists separately (not in /pages/home)
       try {
-        const artists = await getFavoriteArtists(20);
-        setFavoriteArtists(artists);
+        const userId = authTokens?.user_id;
+        if (userId != null) {
+          const artists = await getFavoriteArtists(userId, 20);
+          setFavoriteArtists(artists);
+        }
       } catch (err) {
         console.error("Failed to load favorite artists:", err);
       }
@@ -100,7 +105,7 @@ export default function Home() {
     };
 
     loadHomeData();
-  }, [getHomePage, refreshHomePage, getFavoriteArtists]);
+  }, [authTokens?.user_id]);
 
   const handleOpenPlaylist = (playlist: Playlist) => {
     navigateToPlaylist(playlist.uuid, {

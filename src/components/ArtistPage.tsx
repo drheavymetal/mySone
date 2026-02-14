@@ -1,7 +1,19 @@
 import { Play, Pause, User, Music, X } from "lucide-react";
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type Track, type AlbumDetail, type MediaItemType } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useNavigation } from "../hooks/useNavigation";
+import {
+  getArtistDetail,
+  getArtistTopTracks,
+  getArtistAlbums,
+  getArtistBio,
+} from "../api/tidal";
+import {
+  getTidalImageUrl,
+  type Track,
+  type AlbumDetail,
+  type MediaItemType,
+} from "../types";
 import TidalImage from "./TidalImage";
 import MediaContextMenu from "./MediaContextMenu";
 
@@ -19,16 +31,18 @@ function formatDuration(seconds: number): string {
 
 /** Strip Tidal's wimpLink markup and HTML tags from bio text */
 function cleanBio(raw: string): string {
-  return raw
-    // [wimpLink artistId="123"]Name[/wimpLink] → Name
-    .replace(/\[wimpLink[^\]]*\]/g, "")
-    .replace(/\[\/wimpLink\]/g, "")
-    // [wimpLink albumId="123"]Title[/wimpLink] → Title
-    // catch any remaining wimpLink variants
-    .replace(/\[[^\]]*\]/g, "")
-    // Strip HTML tags
-    .replace(/<[^>]*>/g, "")
-    .trim();
+  return (
+    raw
+      // [wimpLink artistId="123"]Name[/wimpLink] → Name
+      .replace(/\[wimpLink[^\]]*\]/g, "")
+      .replace(/\[\/wimpLink\]/g, "")
+      // [wimpLink albumId="123"]Title[/wimpLink] → Title
+      // catch any remaining wimpLink variants
+      .replace(/\[[^\]]*\]/g, "")
+      // Strip HTML tags
+      .replace(/<[^>]*>/g, "")
+      .trim()
+  );
 }
 
 export default function ArtistPage({
@@ -37,24 +51,24 @@ export default function ArtistPage({
   onBack,
 }: ArtistPageProps) {
   const {
-    getArtistDetail,
-    getArtistTopTracks,
-    getArtistAlbums,
-    getArtistBio,
     playTrack,
     setQueueTracks,
     currentTrack,
     isPlaying,
     pauseTrack,
     resumeTrack,
-    navigateToAlbum,
-  } = useAudioContext();
+  } = usePlayback();
+  const { navigateToAlbum } = useNavigation();
 
   const [topTracks, setTopTracks] = useState<Track[]>([]);
   const [albums, setAlbums] = useState<AlbumDetail[]>([]);
   const [bio, setBio] = useState<string>("");
-  const [picture, setPicture] = useState<string | undefined>(artistInfo?.picture);
-  const [artistName, setArtistName] = useState<string>(artistInfo?.name || "Artist");
+  const [picture, setPicture] = useState<string | undefined>(
+    artistInfo?.picture
+  );
+  const [artistName, setArtistName] = useState<string>(
+    artistInfo?.name || "Artist"
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAllTracks, setShowAllTracks] = useState(false);
@@ -126,7 +140,13 @@ export default function ArtistPage({
     return () => {
       cancelled = true;
     };
-  }, [artistId, getArtistDetail, getArtistTopTracks, getArtistAlbums, getArtistBio]);
+  }, [
+    artistId,
+    getArtistDetail,
+    getArtistTopTracks,
+    getArtistAlbums,
+    getArtistBio,
+  ]);
 
   const trackIds = useMemo(
     () => new Set(topTracks.map((track) => track.id)),
@@ -426,7 +446,9 @@ export default function ArtistPage({
               onClick={() => setShowAllTracks(!showAllTracks)}
               className="mt-3 px-4 py-2 text-[13px] font-bold text-[#a6a6a6] hover:text-white transition-colors"
             >
-              {showAllTracks ? "Show less" : `See all ${topTracks.length} tracks`}
+              {showAllTracks
+                ? "Show less"
+                : `See all ${topTracks.length} tracks`}
             </button>
           )}
         </div>
@@ -435,9 +457,7 @@ export default function ArtistPage({
       {/* Albums / Discography */}
       {albums.length > 0 && (
         <div className="px-8 pb-8">
-          <h2 className="text-[22px] font-bold text-white mb-4">
-            Discography
-          </h2>
+          <h2 className="text-[22px] font-bold text-white mb-4">Discography</h2>
           <div className="flex gap-4 overflow-x-auto no-scrollbar scroll-smooth pb-2">
             {albums.map((album) => (
               <div

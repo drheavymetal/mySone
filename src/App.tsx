@@ -10,7 +10,8 @@ import ArtistPage from "./components/ArtistPage";
 import MixPage from "./components/MixPage";
 import TrackRadioPage from "./components/TrackRadioPage";
 import Login from "./components/Login";
-import { AudioProvider, useAudioContext } from "./contexts/AudioContext";
+import { useAuth } from "./hooks/useAuth";
+import { useNavigation } from "./hooks/useNavigation";
 import { ToastProvider } from "./contexts/ToastContext";
 import "./App.css";
 
@@ -69,7 +70,8 @@ function useZoom() {
 }
 
 function AppContent() {
-  const { isAuthenticated, currentView, navigateHome } = useAudioContext();
+  const { isAuthenticated } = useAuth();
+  const { currentView, navigateHome } = useNavigation();
 
   if (!isAuthenticated) {
     return <Login />;
@@ -149,11 +151,9 @@ function App() {
   }, []);
 
   return (
-    <AudioProvider>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
-    </AudioProvider>
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
   );
 }
 

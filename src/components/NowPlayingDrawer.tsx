@@ -9,13 +9,10 @@ import {
   Plus,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import {
-  getTidalImageUrl,
-  type Track,
-  type Lyrics,
-  type Credit,
-} from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useDrawer } from "../hooks/useDrawer";
+import { getTrackRadio, getTrackLyrics, getTrackCredits } from "../api/tidal";
+import { getTidalImageUrl, type Track, type Lyrics, type Credit } from "../types";
 import TidalImage from "./TidalImage";
 
 type TabId = "queue" | "suggested" | "lyrics" | "credits";
@@ -38,7 +35,7 @@ function QueueTab() {
     playTrack,
     setQueueTracks,
     removeFromQueue,
-  } = useAudioContext();
+  } = usePlayback();
 
   return (
     <div className="flex flex-col gap-6">
@@ -124,8 +121,7 @@ function QueueTab() {
 // ─── Suggested Tracks Tab ────────────────────────────────────────────────────
 
 function SuggestedTab() {
-  const { currentTrack, getTrackRadio, playTrack, addToQueue } =
-    useAudioContext();
+  const { currentTrack, playTrack, addToQueue } = usePlayback();
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -245,8 +241,7 @@ function parseLrc(subtitles: string): LrcLine[] {
 // ─── Lyrics Tab ──────────────────────────────────────────────────────────────
 
 function LyricsTab() {
-  const { currentTrack, isPlaying, getTrackLyrics, getPlaybackPosition } =
-    useAudioContext();
+  const { currentTrack, isPlaying, getPlaybackPosition } = usePlayback();
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -443,7 +438,7 @@ function LyricsTab() {
 // ─── Credits Tab ─────────────────────────────────────────────────────────────
 
 function CreditsTab() {
-  const { currentTrack, getTrackCredits } = useAudioContext();
+  const { currentTrack } = usePlayback();
   const [credits, setCredits] = useState<Credit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -621,8 +616,8 @@ function TrackRow({
 // ─── Main Drawer ─────────────────────────────────────────────────────────────
 
 export default function NowPlayingDrawer() {
-  const { currentTrack, drawerOpen, setDrawerOpen, drawerTab, setDrawerTab } =
-    useAudioContext();
+  const { currentTrack } = usePlayback();
+  const { drawerOpen, setDrawerOpen, drawerTab, setDrawerTab } = useDrawer();
   const activeTab = (drawerTab || "queue") as TabId;
   const setActiveTab = (tab: TabId) => setDrawerTab(tab);
 

@@ -1,7 +1,8 @@
 import { Play, Pause, Radio } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { getTrackRadio } from "../api/tidal";
+import { getTidalImageUrl, type Track } from "../types";
 import TidalImage from "./TidalImage";
 import TrackList from "./TrackList";
 
@@ -17,14 +18,13 @@ export default function TrackRadioPage({
   onBack,
 }: TrackRadioPageProps) {
   const {
-    getTrackRadio,
     playTrack,
     setQueueTracks,
     currentTrack,
     isPlaying,
     pauseTrack,
     resumeTrack,
-  } = useAudioContext();
+  } = usePlayback();
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +59,7 @@ export default function TrackRadioPage({
     return () => {
       cancelled = true;
     };
-  }, [trackId, getTrackRadio]);
+  }, [trackId]);
 
   const trackIds = useMemo(
     () => new Set(tracks.map((track) => track.id)),

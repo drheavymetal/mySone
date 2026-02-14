@@ -7,9 +7,12 @@ import {
   Loader2,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
 import { useToast } from "../contexts/ToastContext";
-import { type MediaItemType, type Track } from "../hooks/useAudio";
+import { type MediaItemType, type Track } from "../types";
+import { fetchMediaTracks } from "../api/tidal";
+import { usePlayback } from "../hooks/usePlayback";
+import { useFavorites } from "../hooks/useFavorites";
+import { usePlaylists } from "../hooks/usePlaylists";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 
 interface MediaContextMenuProps {
@@ -28,14 +31,15 @@ export default function MediaContextMenu({
     setQueueTracks,
     addToQueue,
     playNextInQueue,
-    fetchMediaTracks,
+  } = usePlayback();
+  const {
     addFavoriteAlbum,
     removeFavoriteAlbum,
     isAlbumFavorited,
     addFavoritePlaylist,
     removeFavoritePlaylist,
-    favoritePlaylists,
-  } = useAudioContext();
+  } = useFavorites();
+  const { favoritePlaylists } = usePlaylists();
   const { showToast } = useToast();
 
   const menuRef = useRef<HTMLDivElement>(null);

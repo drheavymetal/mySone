@@ -6,8 +6,10 @@ import {
   Clock,
 } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type DirectHitItem, type SuggestionTextItem, type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useNavigation } from "../hooks/useNavigation";
+import { getSuggestions } from "../api/tidal";
+import { getTidalImageUrl, type DirectHitItem, type SuggestionTextItem, type Track } from "../types";
 import TidalImage from "./TidalImage";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -32,16 +34,14 @@ function saveHistory(history: string[]) {
 }
 
 export default function SearchBar() {
+  const { playTrack, setQueueTracks } = usePlayback();
   const {
-    playTrack,
-    setQueueTracks,
+    currentView,
     navigateToAlbum,
     navigateToArtist,
     navigateToSearch,
     navigateToPlaylist,
-    getSuggestions,
-    currentView,
-  } = useAudioContext();
+  } = useNavigation();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);

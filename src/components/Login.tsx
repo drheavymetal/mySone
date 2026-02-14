@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
+import { useAuth } from "../hooks/useAuth";
+import { getSavedCredentials, parseTokenData } from "../api/tidal";
 import {
   Loader2,
   ExternalLink,
@@ -22,11 +23,9 @@ export default function Login() {
     completePkceAuth,
     startDeviceAuth,
     pollDeviceAuth,
-    parseTokenData,
     importSession,
     getUserPlaylists,
-    getSavedCredentials,
-  } = useAudioContext();
+  } = useAuth();
 
   const [step, setStep] = useState<
     "idle" | "device_pending" | "pkce_waiting" | "exchanging"

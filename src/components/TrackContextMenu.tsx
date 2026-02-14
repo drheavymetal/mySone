@@ -7,9 +7,12 @@ import {
   ListMusic,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
 import { useToast } from "../contexts/ToastContext";
-import { type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { useFavorites } from "../hooks/useFavorites";
+import { useNavigation } from "../hooks/useNavigation";
+import { usePlaylists } from "../hooks/usePlaylists";
+import type { Track } from "../types";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 
 interface TrackContextMenuProps {
@@ -35,15 +38,10 @@ export default function TrackContextMenu({
   isUserPlaylist,
   onTrackRemoved,
 }: TrackContextMenuProps) {
-  const {
-    addToQueue,
-    playNextInQueue,
-    favoriteTrackIds,
-    addFavoriteTrack,
-    removeFavoriteTrack,
-    navigateToTrackRadio,
-    removeTrackFromPlaylist,
-  } = useAudioContext();
+  const { addToQueue, playNextInQueue } = usePlayback();
+  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } = useFavorites();
+  const { navigateToTrackRadio } = useNavigation();
+  const { removeTrackFromPlaylist } = usePlaylists();
   const { showToast } = useToast();
 
   const menuRef = useRef<HTMLDivElement>(null);

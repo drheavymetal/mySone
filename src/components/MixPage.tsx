@@ -1,7 +1,8 @@
 import { Play, Pause, Music } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { type Track } from "../hooks/useAudio";
+import { usePlayback } from "../hooks/usePlayback";
+import { getMixItems } from "../api/tidal";
+import { type Track } from "../types";
 import TrackList from "./TrackList";
 
 interface MixPageProps {
@@ -12,14 +13,13 @@ interface MixPageProps {
 
 export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
   const {
-    getMixItems,
     playTrack,
     setQueueTracks,
     currentTrack,
     isPlaying,
     pauseTrack,
     resumeTrack,
-  } = useAudioContext();
+  } = usePlayback();
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,7 +54,7 @@ export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [mixId, getMixItems]);
+  }, [mixId]);
 
   const trackIds = useMemo(
     () => new Set(tracks.map((track) => track.id)),

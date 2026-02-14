@@ -1,8 +1,8 @@
 import { Plus, Search, X, Loader2 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAudioContext } from "../contexts/AudioContext";
 import { useToast } from "../contexts/ToastContext";
-import { type Playlist, getTidalImageUrl } from "../hooks/useAudio";
+import { usePlaylists } from "../hooks/usePlaylists";
+import { type Playlist, getTidalImageUrl } from "../types";
 import TidalImage from "./TidalImage";
 
 // ─── Public API ────────────────────────────────────────────────
@@ -47,7 +47,7 @@ function CreatePlaylistModal({
   onClose: () => void;
   onCreated: (playlist: Playlist) => void;
 }) {
-  const { createPlaylist, addTracksToPlaylist } = useAudioContext();
+  const { createPlaylist, addTracksToPlaylist } = usePlaylists();
   const { showToast } = useToast();
 
   const [title, setTitle] = useState("");
@@ -182,7 +182,7 @@ export default function AddToPlaylistMenu({
   anchorRef,
   onClose,
 }: AddToPlaylistMenuProps) {
-  const { userPlaylists, addTracksToPlaylist } = useAudioContext();
+  const { userPlaylists, addTracksToPlaylist } = usePlaylists();
   const { showToast } = useToast();
 
   const [showAll, setShowAll] = useState(false);

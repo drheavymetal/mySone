@@ -2,14 +2,12 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { useAudioContext } from "../contexts/AudioContext";
+import { useNavigation } from "../hooks/useNavigation";
 import UserMenu from "./UserMenu";
 import SearchBar from "./SearchBar";
 
 export default function Header() {
-  const {
-    currentView,
-  } = useAudioContext();
+  const { currentView } = useNavigation();
 
   const getHeaderTitle = () => {
     if (currentView.type === "search") {

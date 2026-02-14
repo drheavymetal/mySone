@@ -4,22 +4,23 @@ import {
   Library,
   Heart,
 } from "lucide-react";
-import { useAudioContext } from "../contexts/AudioContext";
-import { getTidalImageUrl, type MediaItemType } from "../hooks/useAudio";
+import { usePlaylists } from "../hooks/usePlaylists";
+import { useNavigation } from "../hooks/useNavigation";
+import { useAuth } from "../hooks/useAuth";
+import { getTidalImageUrl, type MediaItemType } from "../types";
 import TidalImage from "./TidalImage";
 import MediaContextMenu from "./MediaContextMenu";
 import { useState, useMemo, useCallback } from "react";
 
 export default function Sidebar() {
+  const { userPlaylists, favoritePlaylists } = usePlaylists();
   const {
-    userPlaylists,
-    favoritePlaylists,
-    authTokens,
     navigateToPlaylist,
     navigateToFavorites,
     navigateHome,
     currentView,
-  } = useAudioContext();
+  } = useNavigation();
+  const { authTokens } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Context menu state
