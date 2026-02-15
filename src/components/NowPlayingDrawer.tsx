@@ -12,7 +12,7 @@ import {
   ListPlus,
   GripVertical,
 } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePlayback } from "../hooks/usePlayback";
 import { useDrawer } from "../hooks/useDrawer";
@@ -40,7 +40,7 @@ const TABS: { id: TabId; label: string; icon: typeof ListMusic }[] = [
 
 // ─── Queue Tab ───────────────────────────────────────────────────────────────
 
-function QueueTab() {
+const QueueTab = memo(function QueueTab() {
   const {
     currentTrack,
     queue,
@@ -293,7 +293,7 @@ function QueueTab() {
       )}
     </div>
   );
-}
+});
 
 // ─── Suggested Tracks Tab ────────────────────────────────────────────────────
 
@@ -500,7 +500,7 @@ function SuggestedTrackRow({
   );
 }
 
-function SuggestedTab() {
+const SuggestedTab = memo(function SuggestedTab() {
   const { currentTrack, playTrack, addToQueue } = usePlayback();
   const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
@@ -625,7 +625,7 @@ function SuggestedTab() {
       ))}
     </div>
   );
-}
+});
 
 // ─── Lyrics helpers ──────────────────────────────────────────────────────────
 
@@ -685,7 +685,36 @@ function parseLrc(subtitles: string): LrcLine[] {
 
 // ─── Lyrics Tab ──────────────────────────────────────────────────────────────
 
-function LyricsTab() {
+// Memoized individual lyrics line — only re-renders when its own state changes
+const LyricsLine = memo(function LyricsLine({
+  text,
+  isActive,
+  isPast,
+  lineRef,
+}: {
+  text: string;
+  isActive: boolean;
+  isPast: boolean;
+  lineRef: (el: HTMLParagraphElement | null) => void;
+}) {
+  return (
+    <p
+      ref={lineRef}
+      className={`text-[18px] font-medium cursor-default leading-snug origin-left transition-[transform,color,opacity] duration-500 ease-out ${
+        isActive
+          ? "scale-[1.22] font-bold text-white"
+          : isPast
+          ? "text-th-text-disabled"
+          : "text-th-text-faint"
+      }`}
+      style={isActive ? { willChange: "transform" } : undefined}
+    >
+      {text}
+    </p>
+  );
+});
+
+function LyricsTab({ isVisible }: { isVisible: boolean }) {
   const { currentTrack, isPlaying, getPlaybackPosition } = usePlayback();
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -699,6 +728,7 @@ function LyricsTab() {
   const scrollTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   );
+  const activeLineRef = useRef(-1);
 
   // Fetch lyrics
   useEffect(() => {
@@ -710,6 +740,7 @@ function LyricsTab() {
     setLyrics(null);
     setLrcLines([]);
     setActiveLine(-1);
+    activeLineRef.current = -1;
     setUserScrolled(false);
 
     getTrackLyrics(currentTrack.id)
@@ -741,7 +772,6 @@ function LyricsTab() {
     const onScroll = () => {
       if (isAutoScrolling.current) return;
       setUserScrolled(true);
-      // Reset the flag if user stops scrolling for a while (debounce)
       clearTimeout(scrollTimeout.current);
     };
 
@@ -749,9 +779,9 @@ function LyricsTab() {
     return () => el.removeEventListener("scroll", onScroll);
   }, [lrcLines]);
 
-  // Sync active line with playback position
+  // Sync active line with playback position — ONLY when visible and playing
   useEffect(() => {
-    if (lrcLines.length === 0 || !isPlaying) return;
+    if (lrcLines.length === 0 || !isPlaying || !isVisible) return;
 
     const sync = async () => {
       const pos = await getPlaybackPosition();
@@ -762,13 +792,17 @@ function LyricsTab() {
           break;
         }
       }
-      setActiveLine(idx);
+      // Only update state when the active line actually changes
+      if (idx !== activeLineRef.current) {
+        activeLineRef.current = idx;
+        setActiveLine(idx);
+      }
     };
 
     sync();
     const interval = setInterval(sync, 300);
     return () => clearInterval(interval);
-  }, [lrcLines, isPlaying, getPlaybackPosition]);
+  }, [lrcLines, isPlaying, isVisible, getPlaybackPosition]);
 
   // Auto-scroll to active line (only if user hasn't scrolled)
   const scrollToLine = useCallback((idx: number) => {
@@ -778,7 +812,6 @@ function LyricsTab() {
 
     isAutoScrolling.current = true;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    // Give the smooth scroll time to finish before re-enabling user detection
     setTimeout(() => {
       isAutoScrolling.current = false;
     }, 600);
@@ -793,6 +826,14 @@ function LyricsTab() {
     setUserScrolled(false);
     if (activeLine >= 0) scrollToLine(activeLine);
   }, [activeLine, scrollToLine]);
+
+  // Stable ref callback factory — avoids new closures per line on each render
+  const setLineRef = useCallback(
+    (i: number) => (el: HTMLParagraphElement | null) => {
+      lineRefs.current[i] = el;
+    },
+    []
+  );
 
   if (loading) {
     return (
@@ -813,7 +854,6 @@ function LyricsTab() {
 
   // Synced lyrics view (from subtitles/LRC)
   if (lrcLines.length > 0) {
-    lineRefs.current = [];
     return (
       <div className="relative overflow-hidden h-full">
         <div
@@ -821,28 +861,15 @@ function LyricsTab() {
           className="h-full overflow-y-auto overflow-x-hidden flex flex-col gap-3 py-10 pr-0 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent"
           dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}
         >
-          {lrcLines.map((line, i) => {
-            const isActive = i === activeLine;
-            const isPast = activeLine >= 0 && i < activeLine;
-            return (
-              <p
-                key={i}
-                ref={(el) => {
-                  lineRefs.current[i] = el;
-                }}
-                className={`text-[18px] font-medium cursor-default leading-snug origin-left transition-[transform,color,opacity] duration-500 ease-out ${
-                  isActive
-                    ? "scale-[1.22] font-bold text-white"
-                    : isPast
-                    ? "text-th-text-disabled"
-                    : "text-th-text-faint"
-                }`}
-                style={isActive ? { willChange: "transform" } : undefined}
-              >
-                {line.text}
-              </p>
-            );
-          })}
+          {lrcLines.map((line, i) => (
+            <LyricsLine
+              key={i}
+              text={line.text}
+              isActive={i === activeLine}
+              isPast={activeLine >= 0 && i < activeLine}
+              lineRef={setLineRef(i)}
+            />
+          ))}
           <div className="h-40" /> {/* bottom spacer */}
           {lyrics?.lyricsProvider && (
             <p className="text-[11px] text-th-text-disabled pb-4">
@@ -855,7 +882,7 @@ function LyricsTab() {
         {userScrolled && (
           <button
             onClick={handleResync}
-            className="absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2.5 bg-th-accent text-black text-[12px] font-bold rounded-full shadow-lg shadow-black/40 hover:brightness-110 active:scale-95 transition-[filter,transform] duration-150 animate-fadeIn"
+            className="absolute bottom-4 right-8 flex items-center gap-2 px-4 py-2.5 bg-th-accent text-black text-[12px] font-bold rounded-full shadow-lg shadow-black/40 hover:brightness-110 active:scale-95 transition-[filter,transform] duration-150 animate-fadeIn"
           >
             <Mic2 size={14} />
             Sync lyrics
@@ -882,7 +909,7 @@ function LyricsTab() {
 
 // ─── Credits Tab ─────────────────────────────────────────────────────────────
 
-function CreditsTab() {
+const CreditsTab = memo(function CreditsTab() {
   const { currentTrack } = usePlayback();
   const [credits, setCredits] = useState<Credit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -961,7 +988,7 @@ function CreditsTab() {
       ))}
     </div>
   );
-}
+});
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
@@ -1403,11 +1430,11 @@ export default function NowPlayingDrawer() {
               <SuggestedTab />
             </div>
             <div
-              className={`absolute inset-0 overflow-y-auto pl-6 pr-4 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent ${
+              className={`absolute inset-0 overflow-y-auto pl-6 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent ${
                 activeTab === "lyrics" ? "" : "hidden"
               }`}
             >
-              <LyricsTab />
+              <LyricsTab isVisible={drawerOpen && activeTab === "lyrics"} />
             </div>
             <div
               className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent ${
