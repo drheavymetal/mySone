@@ -340,11 +340,11 @@ export default function Login() {
       <div className="text-center p-10 bg-th-surface/60 backdrop-blur-sm rounded-2xl shadow-2xl border border-th-border-subtle max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="mb-6 flex items-center justify-center gap-3">
-          <div className="w-12 h-12 bg-white text-black font-extrabold flex items-center justify-center rounded-md text-2xl">
-            T
+          <div className="w-12 h-12 bg-th-accent text-black font-extrabold flex items-center justify-center rounded-md text-2xl">
+            S
           </div>
           <h1 className="text-4xl font-bold tracking-tight text-white">
-            TIDE VIBE
+            SONE
           </h1>
         </div>
 

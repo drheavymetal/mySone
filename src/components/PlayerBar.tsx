@@ -360,7 +360,7 @@ const QualityBadge = memo(function QualityBadge() {
   return (
     <div className="flex flex-col items-end gap-0.5">
       {detail && (
-        <span className="text-[9px] text-th-text-faint font-medium tracking-wide hidden xl:inline">
+        <span className="text-[9px] text-th-text-faint font-medium tracking-wide inline">
           {detail}
         </span>
       )}

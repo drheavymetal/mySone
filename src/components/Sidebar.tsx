@@ -97,7 +97,7 @@ export default function Sidebar() {
   return (
     <div
       className={`sidebar h-full bg-th-sidebar flex flex-col border-r border-th-border-subtle transition-[width,min-width,max-width] duration-300 ease-in-out flex-shrink-0 ${
-        isCollapsed ? "w-[60px]" : "w-[240px] min-w-[200px] max-w-[300px]"
+        isCollapsed ? "w-[60px]" : "w-[280px] min-w-[240px] max-w-[340px]"
       }`}
     >
       {/* Navigation */}
