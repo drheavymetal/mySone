@@ -14,6 +14,7 @@ import {
   Import,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import Icon from "./Icon";
 
 type AuthMethod = "device" | "pkce" | "import";
 
@@ -136,8 +137,7 @@ export default function Login() {
             clientSecret.trim()
           );
           if (tokens) {
-            if (pollIntervalRef.current)
-              clearInterval(pollIntervalRef.current);
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
             setStep("exchanging");
             setStatus("Loading your library...");
@@ -146,8 +146,7 @@ export default function Login() {
             setStatus("");
           }
         } catch (err: any) {
-          if (pollIntervalRef.current)
-            clearInterval(pollIntervalRef.current);
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
           setError(`Device auth failed: ${err?.message || err}`);
           setStep("idle");
@@ -339,13 +338,11 @@ export default function Login() {
     <div className="flex items-center justify-center h-screen w-screen bg-gradient-to-br from-th-overlay via-th-base to-th-overlay">
       <div className="text-center p-10 bg-th-surface/60 backdrop-blur-sm rounded-2xl shadow-2xl border border-th-border-subtle max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-center gap-3">
-          <div className="w-12 h-12 bg-th-accent text-black font-extrabold flex items-center justify-center rounded-md text-2xl">
-            S
+        <div className="mb-6 flex items-center justify-center gap-0">
+          <div className="w-10 h-12 text-th-accent">
+            <Icon />
           </div>
-          <h1 className="text-4xl font-bold tracking-tight text-white">
-            SONE
-          </h1>
+          <h1 className="text-4xl font-bold tracking-tight text-white">ONE</h1>
         </div>
 
         {/* ==================== Idle ==================== */}
@@ -356,7 +353,11 @@ export default function Login() {
             </p>
 
             {/* Credentials */}
-            <div className={`text-left bg-th-overlay rounded-xl p-5 border border-th-border-subtle mb-4 transition-opacity ${authMethod === "import" ? "opacity-70 cursor-not-allowed" : ""}`}>
+            <div
+              className={`text-left bg-th-overlay rounded-xl p-5 border border-th-border-subtle mb-4 transition-opacity ${
+                authMethod === "import" ? "opacity-70 cursor-not-allowed" : ""
+              }`}
+            >
               <div className="flex items-center gap-2 mb-4">
                 <KeyRound size={16} className="text-th-accent" />
                 <span className="text-[14px] text-white font-medium">
@@ -375,14 +376,20 @@ export default function Login() {
                     <label className="text-[12px] text-th-text-faint">
                       Client ID <span className="text-red-400/70">*</span>
                     </label>
-                    <span className="text-[10px] text-th-text-disabled">Required</span>
+                    <span className="text-[10px] text-th-text-disabled">
+                      Required
+                    </span>
                   </div>
                   <input
                     type="text"
                     value={authMethod === "import" ? "" : clientId}
                     onChange={(e) => setClientId(e.target.value)}
                     disabled={authMethod === "import"}
-                    placeholder={authMethod === "import" ? "Auto-extracted from cURL" : "Your Tidal app Client ID"}
+                    placeholder={
+                      authMethod === "import"
+                        ? "Auto-extracted from cURL"
+                        : "Your Tidal app Client ID"
+                    }
                     className="w-full bg-th-surface border border-white/[0.1] rounded-lg px-3 py-2.5 text-[13px] text-white placeholder-th-text-disabled outline-none focus:border-th-accent/50 font-mono disabled:cursor-not-allowed disabled:placeholder-th-text-faint"
                   />
                 </div>
@@ -402,7 +409,11 @@ export default function Login() {
                       value={authMethod === "import" ? "" : clientSecret}
                       onChange={(e) => setClientSecret(e.target.value)}
                       disabled={authMethod === "import"}
-                      placeholder={authMethod === "import" ? "Auto-extracted from cURL" : "Leave blank for Lossless (CD quality)"}
+                      placeholder={
+                        authMethod === "import"
+                          ? "Auto-extracted from cURL"
+                          : "Leave blank for Lossless (CD quality)"
+                      }
                       className="w-full bg-th-surface border border-white/[0.1] rounded-lg px-3 py-2.5 pr-10 text-[13px] text-white placeholder-th-text-disabled outline-none focus:border-th-accent/50 font-mono disabled:cursor-not-allowed disabled:placeholder-th-text-faint"
                     />
                     <button
@@ -411,11 +422,7 @@ export default function Login() {
                       disabled={authMethod === "import"}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-th-text-faint hover:text-th-text-faint transition-colors disabled:cursor-not-allowed"
                     >
-                      {showSecret ? (
-                        <EyeOff size={15} />
-                      ) : (
-                        <Eye size={15} />
-                      )}
+                      {showSecret ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
                 </div>
@@ -432,14 +439,13 @@ export default function Login() {
                   <Info size={14} className="shrink-0 mt-0.5" />
                   {hasSecret ? (
                     <span>
-                      <span className="font-medium">Hi-Res mode:</span>{" "}
-                      Up to 24-bit/192kHz with automatic token refresh.
+                      <span className="font-medium">Hi-Res mode:</span> Up to
+                      24-bit/192kHz with automatic token refresh.
                     </span>
                   ) : (
                     <span>
-                      <span className="font-medium">Lossless mode:</span>{" "}
-                      CD quality (16-bit/44.1kHz). Add a Client Secret for
-                      Hi-Res.
+                      <span className="font-medium">Lossless mode:</span> CD
+                      quality (16-bit/44.1kHz). Add a Client Secret for Hi-Res.
                     </span>
                   )}
                 </div>
@@ -486,8 +492,8 @@ export default function Login() {
                   <>
                     <p className="text-[12px] text-th-text-faint mb-2">
                       Get a code, visit{" "}
-                      <span className="text-th-text-faint">link.tidal.com</span>, and
-                      enter it to log in. No redirect URLs needed.
+                      <span className="text-th-text-faint">link.tidal.com</span>
+                      , and enter it to log in. No redirect URLs needed.
                     </p>
                     <p className="text-[11px] text-amber-400/70 mb-4">
                       Requires a native app Client ID (Android/desktop). Web
@@ -816,7 +822,12 @@ export default function Login() {
         {/* ==================== Error ==================== */}
         {error && (
           <div className="mt-5 p-4 bg-red-900/30 border border-red-700/50 rounded-lg text-red-400 text-sm text-left break-words overflow-hidden">
-            <p className="whitespace-pre-wrap break-words" style={{ overflowWrap: "anywhere" }}>{error}</p>
+            <p
+              className="whitespace-pre-wrap break-words"
+              style={{ overflowWrap: "anywhere" }}
+            >
+              {error}
+            </p>
             <button
               onClick={() => setError(null)}
               className="mt-2 block w-full text-center underline text-red-300 hover:text-red-200"

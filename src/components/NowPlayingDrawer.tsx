@@ -56,15 +56,16 @@ function QueueTab() {
   const { setDrawerOpen } = useDrawer();
   const { showToast } = useToast();
 
-  // Use a ref so drop handler always reads the current source index
+  // Use refs so drag/drop handlers always read the current values
   const dragIdxRef = useRef<number | null>(null);
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
 
   const handleDragStart = useCallback((e: React.DragEvent, idx: number) => {
     dragIdxRef.current = idx;
     setDragIdx(idx);
-    // Required for WebKit/Tauri to allow the drag
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(idx));
   }, []);
@@ -82,6 +83,7 @@ function QueueTab() {
   const handleDrop = useCallback(
     (e: React.DragEvent, targetIdx: number) => {
       e.preventDefault();
+      e.stopPropagation();
       const sourceIdx = dragIdxRef.current;
       if (sourceIdx === null || sourceIdx === targetIdx) {
         dragIdxRef.current = null;
@@ -89,7 +91,8 @@ function QueueTab() {
         setDropIdx(null);
         return;
       }
-      const reordered = [...queue];
+      const currentQueue = queueRef.current;
+      const reordered = [...currentQueue];
       const [moved] = reordered.splice(sourceIdx, 1);
       reordered.splice(targetIdx, 0, moved);
       setQueueTracks(reordered);
@@ -97,7 +100,7 @@ function QueueTab() {
       setDragIdx(null);
       setDropIdx(null);
     },
-    [queue, setQueueTracks]
+    [setQueueTracks]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -810,10 +813,10 @@ function LyricsTab() {
   if (lrcLines.length > 0) {
     lineRefs.current = [];
     return (
-      <div className="relative h-full">
+      <div className="relative h-full overflow-hidden">
         <div
           ref={containerRef}
-          className="h-full overflow-y-auto flex flex-col gap-3 py-10 px-2 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent"
+          className="h-full overflow-y-auto overflow-x-hidden flex flex-col gap-3 py-10 pr-0 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent"
           dir={lyrics?.isRightToLeft ? "rtl" : "ltr"}
         >
           {lrcLines.map((line, i) => {
@@ -1279,28 +1282,51 @@ export default function NowPlayingDrawer() {
     : undefined;
   const dominantColor = useDominantColor(coverUrl);
 
+  // Manage close animation — keep drawer mounted while animating out
+  const [visible, setVisible] = useState(false);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (drawerOpen && currentTrack) {
+      setVisible(true);
+      setClosing(false);
+    } else if (visible) {
+      // Start close animation
+      setClosing(true);
+      const timer = setTimeout(() => {
+        setVisible(false);
+        setClosing(false);
+      }, 280); // match animation duration
+      return () => clearTimeout(timer);
+    }
+  }, [drawerOpen, currentTrack]);
+
+  const handleClose = useCallback(() => {
+    setDrawerOpen(false);
+  }, [setDrawerOpen]);
+
   // Close on Escape
   useEffect(() => {
-    if (!drawerOpen) return;
+    if (!visible) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawerOpen(false);
+      if (e.key === "Escape") handleClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [drawerOpen, setDrawerOpen]);
+  }, [visible, handleClose]);
 
-  if (!drawerOpen || !currentTrack) return null;
+  if (!visible || !currentTrack) return null;
 
   return (
     <div className="fixed inset-0 bottom-[90px] z-40 flex flex-col">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/80"
-        onClick={() => setDrawerOpen(false)}
+        className={`absolute inset-0 bg-black/80 transition-opacity duration-280 ${closing ? "opacity-0" : "opacity-100"}`}
+        onClick={handleClose}
       />
 
       {/* Drawer content */}
-      <div className="relative z-10 flex-1 flex overflow-hidden bg-th-base animate-slideUp">
+      <div className={`relative z-10 flex-1 flex overflow-hidden bg-th-base ${closing ? "animate-slideDown" : "animate-slideUp"}`}>
         {/* Gradient overlay from dominant album color */}
         <div
           className="absolute inset-0 pointer-events-none z-0 transition-colors duration-1000 ease-in-out"
@@ -1353,7 +1379,7 @@ export default function NowPlayingDrawer() {
               ))}
             </div>
             <button
-              onClick={() => setDrawerOpen(false)}
+              onClick={handleClose}
               className="w-8 h-8 rounded-full flex items-center justify-center text-th-text-muted hover:text-white hover:bg-white/8 transition-colors duration-150 shrink-0 ml-2"
             >
               <X size={18} />
@@ -1377,7 +1403,7 @@ export default function NowPlayingDrawer() {
               <SuggestedTab />
             </div>
             <div
-              className={`absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent ${
+              className={`absolute inset-0 overflow-y-auto pl-6 pr-4 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent ${
                 activeTab === "lyrics" ? "" : "hidden"
               }`}
             >

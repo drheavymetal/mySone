@@ -249,8 +249,8 @@ export function AppInitializer() {
     const id = setInterval(async () => {
       try {
         const finished = await invoke<boolean>("is_track_finished");
-        if (finished && queue.length > 0) {
-          playNext();
+        if (finished) {
+          playNext(); // plays next track, or sets isPlaying=false when queue is empty
         }
       } catch (err) {
         console.error("Failed to check track status:", err);

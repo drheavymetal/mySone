@@ -103,6 +103,23 @@ body {
   will-change: transform, opacity;
 }
 
+/* Now Playing Drawer slide-down animation (close) */
+@keyframes slideDown {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.28s ease-in both;
+  will-change: transform, opacity;
+}
+
 /* Floating button fade-in */
 @keyframes fadeIn {
   from {
