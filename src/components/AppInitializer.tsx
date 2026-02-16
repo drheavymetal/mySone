@@ -8,7 +8,7 @@
  * and useAtomValue() only for atoms that must be read reactively.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, startTransition } from "react";
 import { useSetAtom, useAtomValue, useStore } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -332,7 +332,7 @@ export function AppInitializer() {
     }
 
     const handler = (event: PopStateEvent) => {
-      if (event.state) setCurrentView(event.state);
+      if (event.state) startTransition(() => setCurrentView(event.state));
     };
 
     window.addEventListener("popstate", handler);

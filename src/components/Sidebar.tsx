@@ -121,10 +121,10 @@ export default function Sidebar() {
       }`}
     >
       {/* Navigation */}
-      <nav className="px-2 pt-3 pb-1 space-y-0.5">
+      <nav className="px-2 pt-3 space-y-0.5">
         <button
           onClick={navigateHome}
-          className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors duration-150 group ${
+          className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
             currentView.type === "home"
               ? "text-white bg-white/[0.08]"
               : "text-th-text-secondary hover:text-white hover:bg-th-border-subtle"
@@ -136,7 +136,7 @@ export default function Sidebar() {
         </button>
         <button
           onClick={navigateToExplore}
-          className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors duration-150 group ${
+          className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
             currentView.type === "explore" || currentView.type === "explorePage"
               ? "text-white bg-white/[0.08]"
               : "text-th-text-secondary hover:text-white hover:bg-th-border-subtle"
@@ -151,7 +151,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Library Header */}
-      <div className="flex-1 flex flex-col min-h-0 mt-1">
+      <div className="flex-1 flex flex-col min-h-0">
         <div
           className={`px-2 py-1.5 flex items-center ${
             isCollapsed ? "justify-center" : "justify-between"
@@ -172,7 +172,7 @@ export default function Sidebar() {
 
         {/* Filter Pills */}
         {!isCollapsed && (
-          <div className="px-2 pt-1 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
+          <div className="px-2 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
             {(["playlists", "albums"] as const).map((tab) => (
               <button
                 key={tab}

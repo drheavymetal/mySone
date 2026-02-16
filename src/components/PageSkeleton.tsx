@@ -7,6 +7,68 @@ function Pulse({ className }: { className: string }) {
   return <div className={`animate-pulse bg-white/6 rounded ${className}`} />;
 }
 
+/** Skeleton for artist pages — round avatar, name, bio snippet, tracks, discography */
+export function ArtistPageSkeleton() {
+  return (
+    <div className="flex-1 bg-linear-to-b from-th-surface to-th-base overflow-hidden">
+      {/* Header: round avatar + name + bio */}
+      <div className="px-8 pb-8 pt-8 flex items-end gap-7">
+        <Pulse className="w-[232px] h-[232px] shrink-0 rounded-full!" />
+        <div className="flex flex-col gap-3 pb-2 flex-1 min-w-0">
+          <Pulse className="w-14 h-3 rounded-full" />
+          <Pulse className="w-[50%] h-12 rounded-lg" />
+          <Pulse className="w-[70%] h-4 rounded-full" />
+          <Pulse className="w-20 h-3 rounded-full mt-1" />
+        </div>
+      </div>
+
+      {/* Play button */}
+      <div className="px-8 py-5 flex items-center gap-5">
+        <Pulse className="w-14 h-14 rounded-full!" />
+      </div>
+
+      {/* Popular tracks */}
+      <div className="px-8 pb-6">
+        <Pulse className="w-40 h-6 rounded-lg mb-4" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[36px_1fr_minmax(140px,1fr)_72px] gap-4 px-4 py-2.5"
+          >
+            <div className="flex items-center justify-end">
+              <Pulse className="w-5 h-4 rounded" />
+            </div>
+            <div className="flex items-center gap-3">
+              <Pulse className="w-10 h-10 shrink-0 rounded" />
+              <Pulse className="w-[55%] h-3.5 rounded" />
+            </div>
+            <div className="flex items-center">
+              <Pulse className="w-[45%] h-3 rounded" />
+            </div>
+            <div className="flex items-center justify-end">
+              <Pulse className="w-10 h-3 rounded" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Discography */}
+      <div className="px-8 pb-8">
+        <Pulse className="w-36 h-6 rounded-lg mb-4" />
+        <div className="flex gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="w-[180px] shrink-0 p-3">
+              <Pulse className="w-full aspect-square rounded-md mb-3" />
+              <Pulse className="w-[75%] h-3.5 rounded mb-2" />
+              <Pulse className="w-[50%] h-3 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Skeleton for album / playlist / mix / radio pages with header + track list */
 export function DetailPageSkeleton({ type = "album" }: { type?: "album" | "playlist" | "mix" | "radio" | "favorites" }) {
   return (

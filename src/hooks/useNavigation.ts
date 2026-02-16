@@ -1,7 +1,19 @@
-import { useCallback } from "react";
+import { useCallback, startTransition } from "react";
 import { useAtom } from "jotai";
 import { currentViewAtom } from "../atoms/navigation";
 import type { AppView } from "../types";
+
+function navigate(
+  setCurrentView: (view: AppView) => void,
+  view: AppView
+) {
+  window.history.pushState(view, "");
+  // Wrap in startTransition so React can show the new page's skeleton
+  // immediately without blocking on unmounting the old page's heavy DOM.
+  startTransition(() => {
+    setCurrentView(view);
+  });
+}
 
 export function useNavigation() {
   const [currentView, setCurrentView] = useAtom(currentViewAtom);
@@ -14,9 +26,7 @@ export function useNavigation() {
       albumId: number,
       albumInfo?: { title: string; cover?: string; artistName?: string }
     ) => {
-      const view: AppView = { type: "album", albumId, albumInfo };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "album", albumId, albumInfo });
     },
     [setCurrentView]
   );
@@ -33,39 +43,29 @@ export function useNavigation() {
         isUserPlaylist?: boolean;
       }
     ) => {
-      const view: AppView = { type: "playlist", playlistId, playlistInfo };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "playlist", playlistId, playlistInfo });
     },
     [setCurrentView]
   );
 
   const navigateToFavorites = useCallback(() => {
-    const view: AppView = { type: "favorites" };
-    window.history.pushState(view, "");
-    setCurrentView(view);
+    navigate(setCurrentView, { type: "favorites" });
   }, [setCurrentView]);
 
   const navigateHome = useCallback(() => {
-    const view: AppView = { type: "home" };
-    window.history.pushState(view, "");
-    setCurrentView(view);
+    navigate(setCurrentView, { type: "home" });
   }, [setCurrentView]);
 
   const navigateToSearch = useCallback(
     (query: string) => {
-      const view: AppView = { type: "search", query };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "search", query });
     },
     [setCurrentView]
   );
 
   const navigateToViewAll = useCallback(
     (title: string, apiPath: string) => {
-      const view: AppView = { type: "viewAll", title, apiPath };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "viewAll", title, apiPath });
     },
     [setCurrentView]
   );
@@ -75,9 +75,7 @@ export function useNavigation() {
       artistId: number,
       artistInfo?: { name: string; picture?: string }
     ) => {
-      const view: AppView = { type: "artist", artistId, artistInfo };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "artist", artistId, artistInfo });
     },
     [setCurrentView]
   );
@@ -87,9 +85,7 @@ export function useNavigation() {
       mixId: string,
       mixInfo?: { title: string; image?: string; subtitle?: string }
     ) => {
-      const view: AppView = { type: "mix", mixId, mixInfo };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "mix", mixId, mixInfo });
     },
     [setCurrentView]
   );
@@ -99,24 +95,18 @@ export function useNavigation() {
       trackId: number,
       trackInfo?: { title: string; artistName?: string; cover?: string }
     ) => {
-      const view: AppView = { type: "trackRadio", trackId, trackInfo };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "trackRadio", trackId, trackInfo });
     },
     [setCurrentView]
   );
 
   const navigateToExplore = useCallback(() => {
-    const view: AppView = { type: "explore" };
-    window.history.pushState(view, "");
-    setCurrentView(view);
+    navigate(setCurrentView, { type: "explore" });
   }, [setCurrentView]);
 
   const navigateToExplorePage = useCallback(
     (apiPath: string, title: string) => {
-      const view: AppView = { type: "explorePage", apiPath, title };
-      window.history.pushState(view, "");
-      setCurrentView(view);
+      navigate(setCurrentView, { type: "explorePage", apiPath, title });
     },
     [setCurrentView]
   );

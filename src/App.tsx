@@ -86,6 +86,7 @@ function AppContent() {
       case "album":
         return (
           <AlbumView
+            key={currentView.albumId}
             albumId={currentView.albumId}
             albumInfo={currentView.albumInfo}
             onBack={navigateHome}
@@ -94,6 +95,7 @@ function AppContent() {
       case "playlist":
         return (
           <PlaylistView
+            key={currentView.playlistId}
             playlistId={currentView.playlistId}
             playlistInfo={currentView.playlistInfo}
             onBack={navigateHome}
@@ -102,10 +104,11 @@ function AppContent() {
       case "favorites":
         return <FavoritesView onBack={navigateHome} />;
       case "search":
-        return <SearchView query={currentView.query} onBack={navigateHome} />;
+        return <SearchView key={currentView.query} query={currentView.query} onBack={navigateHome} />;
       case "viewAll":
         return (
           <ViewAllPage
+            key={currentView.apiPath}
             title={currentView.title}
             apiPath={currentView.apiPath}
             onBack={navigateHome}
@@ -114,6 +117,7 @@ function AppContent() {
       case "artist":
         return (
           <ArtistPage
+            key={currentView.artistId}
             artistId={currentView.artistId}
             artistInfo={currentView.artistInfo}
             onBack={navigateHome}
@@ -122,6 +126,7 @@ function AppContent() {
       case "mix":
         return (
           <MixPage
+            key={currentView.mixId}
             mixId={currentView.mixId}
             mixInfo={currentView.mixInfo}
             onBack={navigateHome}
@@ -130,6 +135,7 @@ function AppContent() {
       case "trackRadio":
         return (
           <TrackRadioPage
+            key={currentView.trackId}
             trackId={currentView.trackId}
             trackInfo={currentView.trackInfo}
             onBack={navigateHome}
@@ -140,6 +146,7 @@ function AppContent() {
       case "explorePage":
         return (
           <ExploreSubPage
+            key={currentView.apiPath}
             apiPath={currentView.apiPath}
             title={currentView.title}
             onBack={navigateToExplore}

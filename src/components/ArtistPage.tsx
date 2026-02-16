@@ -1,4 +1,4 @@
-import { Play, Pause, User, Music, X } from "lucide-react";
+import { Play, Pause, User, Music, X, Shuffle } from "lucide-react";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useAtomValue } from "jotai";
 import { isPlayingAtom, currentTrackAtom } from "../atoms/playback";
@@ -18,6 +18,7 @@ import {
 } from "../types";
 import TidalImage from "./TidalImage";
 import MediaContextMenu from "./MediaContextMenu";
+import { ArtistPageSkeleton } from "./PageSkeleton";
 
 interface ArtistPageProps {
   artistId: number;
@@ -138,13 +139,7 @@ export default function ArtistPage({
     return () => {
       cancelled = true;
     };
-  }, [
-    artistId,
-    getArtistDetail,
-    getArtistTopTracks,
-    getArtistAlbums,
-    getArtistBio,
-  ]);
+  }, [artistId]);
 
   const trackIds = useMemo(
     () => new Set(topTracks.map((track) => track.id)),
@@ -180,6 +175,21 @@ export default function ArtistPage({
     }
   };
 
+  const handleShuffle = async () => {
+    if (topTracks.length === 0) return;
+    const shuffled = [...topTracks];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    try {
+      setQueueTracks(shuffled.slice(1));
+      await playTrack(shuffled[0]);
+    } catch (err) {
+      console.error("Failed to shuffle artist tracks:", err);
+    }
+  };
+
   const isCurrentlyPlaying = (track: Track) =>
     currentTrack?.id === track.id && isPlaying;
   const isCurrentTrackRow = (track: Track) => currentTrack?.id === track.id;
@@ -193,14 +203,7 @@ export default function ArtistPage({
   const displayTracks = showAllTracks ? topTracks : topTracks.slice(0, 5);
 
   if (loading) {
-    return (
-      <div className="flex-1 bg-linear-to-b from-th-surface to-th-base flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-th-accent border-t-transparent rounded-full animate-spin" />
-          <p className="text-th-text-muted text-sm">Loading artist...</p>
-        </div>
-      </div>
-    );
+    return <ArtistPageSkeleton />;
   }
 
   if (error) {
@@ -331,17 +334,25 @@ export default function ArtistPage({
         </div>
       )}
 
-      {/* Play button */}
-      <div className="px-8 py-5 flex items-center gap-5">
+      {/* Play Controls */}
+      <div className="px-8 py-5 flex items-center gap-3">
         <button
           onClick={handlePlayAll}
-          className="w-14 h-14 bg-th-accent rounded-full flex items-center justify-center shadow-xl hover:scale-105 hover:brightness-110 transition-[transform,filter] duration-150"
+          className="flex items-center gap-2 px-6 py-2.5 bg-th-accent text-black font-bold text-sm rounded-full shadow-lg hover:brightness-110 hover:scale-[1.03] transition-[transform,filter] duration-150"
         >
           {artistPlaying ? (
-            <Pause size={24} fill="black" className="text-black" />
+            <Pause size={18} fill="black" className="text-black" />
           ) : (
-            <Play size={24} fill="black" className="text-black ml-1" />
+            <Play size={18} fill="black" className="text-black" />
           )}
+          {artistPlaying ? "Pause" : "Play"}
+        </button>
+        <button
+          onClick={handleShuffle}
+          className="flex items-center gap-2 px-6 py-2.5 bg-th-button text-white font-bold text-sm rounded-full hover:bg-th-button-hover hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
+        >
+          <Shuffle size={18} />
+          Shuffle
         </button>
       </div>
 
