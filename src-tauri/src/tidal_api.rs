@@ -1,4 +1,4 @@
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
@@ -450,7 +450,7 @@ impl TidalClient {
         self.client_secret = client_secret.to_string();
     }
 
-    pub fn refresh_token(&mut self) -> Result<AuthTokens, String> {
+    pub async fn refresh_token(&mut self) -> Result<AuthTokens, String> {
         if self.client_id.is_empty() {
             return Err("Client ID not configured".to_string());
         }
@@ -475,10 +475,11 @@ impl TidalClient {
             .post(format!("{}/token", TIDAL_AUTH_URL))
             .form(&form_params)
             .send()
+            .await
             .map_err(|e| format!("Failed to refresh token: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Token refresh failed ({}): {}", status, body));
@@ -513,7 +514,7 @@ impl TidalClient {
     }
 
     /// Helper to perform an authenticated GET request with automatic token refresh on 401.
-    fn authenticated_get(&mut self, url: &str, query: &[(&str, &str)]) -> Result<reqwest::blocking::Response, String> {
+    async fn authenticated_get(&mut self, url: &str, query: &[(&str, &str)]) -> Result<reqwest::Response, String> {
         // 1. Get current token (clone to avoid borrow)
         let access_token = self.tokens.as_ref().ok_or("Not authenticated")?.access_token.clone();
 
@@ -523,13 +524,14 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", access_token))
             .query(query)
             .send()
+            .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
         // 3. Check 401
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
              println!("DEBUG: Got 401 from {}, attempting refresh...", url);
              // 4. Refresh token (requires &mut self)
-             let new_tokens = self.refresh_token()?;
+             let new_tokens = self.refresh_token().await?;
              println!("DEBUG: Refresh successful, retrying request...");
 
              // 5. Retry request
@@ -538,13 +540,14 @@ impl TidalClient {
                 .header("Authorization", format!("Bearer {}", new_tokens.access_token))
                 .query(query)
                 .send()
+                .await
                 .map_err(|e| format!("Retry failed: {}", e));
         }
 
         Ok(response)
     }
 
-    pub fn start_device_auth(&self) -> Result<DeviceAuthResponse, String> {
+    pub async fn start_device_auth(&self) -> Result<DeviceAuthResponse, String> {
         if self.client_id.is_empty() {
             return Err("Client ID not configured".to_string());
         }
@@ -562,10 +565,11 @@ impl TidalClient {
             .post(format!("{}/device_authorization", TIDAL_AUTH_URL))
             .form(&form_params)
             .send()
+            .await
             .map_err(|e| format!("Failed to start device auth: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             // Detect "not a Limited Input Device client" error and give a clear message
@@ -584,7 +588,7 @@ impl TidalClient {
             .map_err(|e| format!("Failed to parse device auth response: {} - Body: {}", e, body))
     }
 
-    pub fn poll_device_token(&mut self, device_code: &str) -> Result<Option<AuthTokens>, String> {
+    pub async fn poll_device_token(&mut self, device_code: &str) -> Result<Option<AuthTokens>, String> {
         if self.client_id.is_empty() {
             return Err("Client ID not configured".to_string());
         }
@@ -604,10 +608,11 @@ impl TidalClient {
             .post(format!("{}/token", TIDAL_AUTH_URL))
             .form(&form_params)
             .send()
+            .await
             .map_err(|e| format!("Failed to poll device token: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         // 400 with "authorization_pending" or "slow_down" means user hasn't authorized yet
         if status.as_u16() == 400
@@ -627,7 +632,7 @@ impl TidalClient {
         Ok(Some(tokens))
     }
 
-    pub fn exchange_pkce_code(
+    pub async fn exchange_pkce_code(
         &mut self,
         code: &str,
         code_verifier: &str,
@@ -651,10 +656,11 @@ impl TidalClient {
                 ("client_unique_key", client_unique_key),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to exchange PKCE code: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("PKCE token exchange failed ({}): {}", status, body));
@@ -667,13 +673,13 @@ impl TidalClient {
         Ok(tokens)
     }
 
-    pub fn get_user_profile(&mut self, user_id: u64) -> Result<(String, Option<String>), String> {
+    pub async fn get_user_profile(&mut self, user_id: u64) -> Result<(String, Option<String>), String> {
         let url = format!("{}/users/{}", TIDAL_API_URL, user_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         if !response.status().is_success() {
             return Err(format!("User profile request failed: {}", response.status()));
@@ -692,6 +698,7 @@ impl TidalClient {
 
         let data = response
             .json::<UserProfile>()
+            .await
             .map_err(|e| format!("Failed to parse user profile: {}", e))?;
 
         let username = data.username.clone();
@@ -704,11 +711,11 @@ impl TidalClient {
         Ok((name, username))
     }
 
-    pub fn get_session_info(&mut self) -> Result<u64, String> {
+    pub async fn get_session_info(&mut self) -> Result<u64, String> {
         let url = format!("{}/sessions", TIDAL_API_URL);
         let country_code = self.country_code.clone();
 
-        let response = self.authenticated_get(&url, &[])?;
+        let response = self.authenticated_get(&url, &[]).await?;
 
         if !response.status().is_success() {
             return Err(format!("Session request failed: {}", response.status()));
@@ -724,6 +731,7 @@ impl TidalClient {
 
         let data = response
             .json::<SessionResponse>()
+            .await
             .map_err(|e| format!("Failed to parse session: {}", e))?;
 
         // Store the user's country code for all subsequent API calls
@@ -736,17 +744,17 @@ impl TidalClient {
         Ok(data.user_id)
     }
 
-    pub fn get_user_playlists(&mut self, user_id: u64) -> Result<Vec<TidalPlaylist>, String> {
+    pub async fn get_user_playlists(&mut self, user_id: u64) -> Result<Vec<TidalPlaylist>, String> {
         let url = format!("{}/users/{}/playlists", TIDAL_API_URL, user_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
             ("limit", "50"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -766,7 +774,7 @@ impl TidalClient {
         Ok(playlists)
     }
 
-    pub fn create_playlist(&self, user_id: u64, title: &str, description: &str) -> Result<TidalPlaylist, String> {
+    pub async fn create_playlist(&self, user_id: u64, title: &str, description: &str) -> Result<TidalPlaylist, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -776,10 +784,11 @@ impl TidalClient {
             .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("title", title), ("description", description)])
             .send()
+            .await
             .map_err(|e| format!("Failed to create playlist: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Create playlist API error ({}): {}", status, body));
@@ -791,7 +800,7 @@ impl TidalClient {
         Ok(raw.into())
     }
 
-    pub fn add_track_to_playlist(&self, playlist_id: &str, track_id: u64) -> Result<(), String> {
+    pub async fn add_track_to_playlist(&self, playlist_id: &str, track_id: u64) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         // First, get the playlist ETag which is required for modifications
@@ -801,6 +810,7 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
         let etag = head_response
@@ -822,19 +832,20 @@ impl TidalClient {
                 ("onDupes", &"FAIL".to_string()),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to add track to playlist: {}", e))?;
 
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             return Err(format!("Add track to playlist API error ({}): {}", status, body));
         }
 
         Ok(())
     }
 
-    pub fn remove_track_from_playlist(&self, playlist_id: &str, index: u32) -> Result<(), String> {
+    pub async fn remove_track_from_playlist(&self, playlist_id: &str, index: u32) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         // First, get the playlist ETag which is required for modifications
@@ -844,6 +855,7 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
         let etag = head_response
@@ -861,29 +873,30 @@ impl TidalClient {
             .header("If-None-Match", &etag)
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to remove track from playlist: {}", e))?;
 
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             return Err(format!("Remove track from playlist API error ({}): {}", status, body));
         }
 
         Ok(())
     }
 
-    pub fn get_favorite_playlists(&mut self, user_id: u64) -> Result<Vec<TidalPlaylist>, String> {
+    pub async fn get_favorite_playlists(&mut self, user_id: u64) -> Result<Vec<TidalPlaylist>, String> {
         let url = format!("{}/users/{}/favorites/playlists", TIDAL_API_URL, user_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
             ("limit", "50"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Favorite playlists API error ({}): {}", status, body));
@@ -906,7 +919,7 @@ impl TidalClient {
         Ok(playlists)
     }
 
-    pub fn get_playlist_tracks(&mut self, playlist_id: &str) -> Result<Vec<TidalTrack>, String> {
+    pub async fn get_playlist_tracks(&mut self, playlist_id: &str) -> Result<Vec<TidalTrack>, String> {
         let url = format!("{}/playlists/{}/tracks", TIDAL_API_URL, playlist_id);
         let country_code = self.country_code.clone();
 
@@ -933,10 +946,10 @@ impl TidalClient {
                 ("countryCode", &country_code),
                 ("limit", &limit_str),
                 ("offset", &offset_str),
-            ])?;
+            ]).await?;
 
             let status = response.status();
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
 
             if !status.is_success() {
                 return Err(format!("API error ({}): {}", status, body));
@@ -958,7 +971,7 @@ impl TidalClient {
         Ok(all_tracks)
     }
 
-    pub fn get_playlist_tracks_page(&mut self, playlist_id: &str, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
+    pub async fn get_playlist_tracks_page(&mut self, playlist_id: &str, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
         let url = format!("{}/playlists/{}/tracks", TIDAL_API_URL, playlist_id);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
@@ -968,10 +981,10 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("limit", &limit_str),
             ("offset", &offset_str),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1001,16 +1014,16 @@ impl TidalClient {
         })
     }
 
-    pub fn get_album_detail(&mut self, album_id: u64) -> Result<TidalAlbumDetail, String> {
+    pub async fn get_album_detail(&mut self, album_id: u64) -> Result<TidalAlbumDetail, String> {
         let url = format!("{}/albums/{}", TIDAL_API_URL, album_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1020,7 +1033,7 @@ impl TidalClient {
             .map_err(|e| format!("Failed to parse album: {} - Body: {}", e, body))
     }
 
-    pub fn get_album_tracks(&mut self, album_id: u64, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
+    pub async fn get_album_tracks(&mut self, album_id: u64, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
         let url = format!("{}/albums/{}/tracks", TIDAL_API_URL, album_id);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
@@ -1030,10 +1043,10 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("limit", &limit_str),
             ("offset", &offset_str),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1062,7 +1075,7 @@ impl TidalClient {
         })
     }
 
-    pub fn get_favorite_tracks(&mut self, user_id: u64, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
+    pub async fn get_favorite_tracks(&mut self, user_id: u64, offset: u32, limit: u32) -> Result<PaginatedTracks, String> {
         let url = format!("{}/users/{}/favorites/tracks", TIDAL_API_URL, user_id);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
@@ -1074,10 +1087,10 @@ impl TidalClient {
             ("offset", &offset_str),
             ("order", "DATE"),
             ("orderDirection", "DESC"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1116,7 +1129,7 @@ impl TidalClient {
         })
     }
 
-    pub fn is_track_favorited(&self, user_id: u64, track_id: u64) -> Result<bool, String> {
+    pub async fn is_track_favorited(&self, user_id: u64, track_id: u64) -> Result<bool, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let response = self
             .client
@@ -1130,10 +1143,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch favorite tracks: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1166,7 +1180,7 @@ impl TidalClient {
         }))
     }
 
-    pub fn get_favorite_track_ids(&self, user_id: u64) -> Result<Vec<u64>, String> {
+    pub async fn get_favorite_track_ids(&self, user_id: u64) -> Result<Vec<u64>, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let response = self
             .client
@@ -1180,10 +1194,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch favorite tracks: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1206,7 +1221,7 @@ impl TidalClient {
         Ok(data.items.into_iter().map(|f| f.item.id).collect())
     }
 
-    pub fn add_favorite_track(&self, user_id: u64, track_id: u64) -> Result<(), String> {
+    pub async fn add_favorite_track(&self, user_id: u64, track_id: u64) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let track_id_str = track_id.to_string();
 
@@ -1217,10 +1232,11 @@ impl TidalClient {
             .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("trackId", track_id_str.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to favorite track: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1229,7 +1245,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn remove_favorite_track(&self, user_id: u64, track_id: u64) -> Result<(), String> {
+    pub async fn remove_favorite_track(&self, user_id: u64, track_id: u64) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -1241,10 +1257,11 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to remove favorite track: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1253,7 +1270,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn is_album_favorited(&self, user_id: u64, album_id: u64) -> Result<bool, String> {
+    pub async fn is_album_favorited(&self, user_id: u64, album_id: u64) -> Result<bool, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let response = self
             .client
@@ -1267,10 +1284,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch favorite albums: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1303,7 +1321,7 @@ impl TidalClient {
         }))
     }
 
-    pub fn add_favorite_album(&self, user_id: u64, album_id: u64) -> Result<(), String> {
+    pub async fn add_favorite_album(&self, user_id: u64, album_id: u64) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
         let album_id_str = album_id.to_string();
 
@@ -1314,10 +1332,11 @@ impl TidalClient {
             .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("albumId", album_id_str.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to favorite album: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1326,7 +1345,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn remove_favorite_album(&self, user_id: u64, album_id: u64) -> Result<(), String> {
+    pub async fn remove_favorite_album(&self, user_id: u64, album_id: u64) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -1338,10 +1357,11 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to remove favorite album: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1350,7 +1370,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn add_favorite_playlist(&self, user_id: u64, playlist_uuid: &str) -> Result<(), String> {
+    pub async fn add_favorite_playlist(&self, user_id: u64, playlist_uuid: &str) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -1360,10 +1380,11 @@ impl TidalClient {
             .query(&[("countryCode", self.country_code.as_str())])
             .form(&[("uuid", playlist_uuid)])
             .send()
+            .await
             .map_err(|e| format!("Failed to favorite playlist: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1372,7 +1393,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn remove_favorite_playlist(&self, user_id: u64, playlist_uuid: &str) -> Result<(), String> {
+    pub async fn remove_favorite_playlist(&self, user_id: u64, playlist_uuid: &str) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -1384,10 +1405,11 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to remove favorite playlist: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1396,7 +1418,7 @@ impl TidalClient {
         Ok(())
     }
 
-    pub fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[u64]) -> Result<(), String> {
+    pub async fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[u64]) -> Result<(), String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         // Get the playlist ETag which is required for modifications
@@ -1406,6 +1428,7 @@ impl TidalClient {
             .header("Authorization", format!("Bearer {}", tokens.access_token))
             .query(&[("countryCode", self.country_code.as_str())])
             .send()
+            .await
             .map_err(|e| format!("Failed to get playlist ETag: {}", e))?;
 
         let etag = head_response
@@ -1428,19 +1451,20 @@ impl TidalClient {
                 ("onDupes", "SKIP"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to add tracks to playlist: {}", e))?;
 
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             return Err(format!("Add tracks to playlist API error ({}): {}", status, body));
         }
 
         Ok(())
     }
 
-    pub fn get_stream_url(&mut self, track_id: u64, quality: &str) -> Result<StreamInfo, String> {
+    pub async fn get_stream_url(&mut self, track_id: u64, quality: &str) -> Result<StreamInfo, String> {
         let url = format!("{}/tracks/{}/playbackinfopostpaywall", TIDAL_API_URL, track_id);
         let country_code = self.country_code.clone();
 
@@ -1449,10 +1473,10 @@ impl TidalClient {
             ("audioquality", quality),
             ("playbackmode", "STREAM"),
             ("assetpresentation", "FULL"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -1557,16 +1581,16 @@ impl TidalClient {
         })
     }
 
-    pub fn get_track_lyrics(&mut self, track_id: u64) -> Result<TidalLyrics, String> {
+    pub async fn get_track_lyrics(&mut self, track_id: u64) -> Result<TidalLyrics, String> {
         let url = format!("{}/tracks/{}/lyrics", TIDAL_API_URL, track_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Lyrics not available ({})", status));
@@ -1576,16 +1600,16 @@ impl TidalClient {
             .map_err(|e| format!("Failed to parse lyrics: {} - Body: {}", e, body))
     }
 
-    pub fn get_track_credits(&mut self, track_id: u64) -> Result<Vec<TidalCredit>, String> {
+    pub async fn get_track_credits(&mut self, track_id: u64) -> Result<Vec<TidalCredit>, String> {
         let url = format!("{}/tracks/{}/credits", TIDAL_API_URL, track_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Credits not available ({})", status));
@@ -1595,7 +1619,7 @@ impl TidalClient {
             .map_err(|e| format!("Failed to parse credits: {} - Body: {}", e, body))
     }
 
-    pub fn get_track_radio(&mut self, track_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
+    pub async fn get_track_radio(&mut self, track_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
         let url = format!("{}/tracks/{}/radio", TIDAL_API_URL, track_id);
         let limit_str = limit.to_string();
         let country_code = self.country_code.clone();
@@ -1603,10 +1627,10 @@ impl TidalClient {
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
             ("limit", &limit_str),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Track radio not available ({})", status));
@@ -1628,17 +1652,17 @@ impl TidalClient {
             .map_err(|e| format!("Failed to parse track radio: {} - Body: {}", e, body))
     }
 
-    pub fn search(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
+    pub async fn search(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
         // Try the v2 API first (web app uses this, returns playlists properly)
-        if let Ok(v2) = self.search_v2(query, limit) {
+        if let Ok(v2) = self.search_v2(query, limit).await {
             return Ok(v2);
         }
 
         // Fallback to v1 API
-        self.search_v1(query, limit)
+        self.search_v1(query, limit).await
     }
 
-    fn search_v2(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
+    async fn search_v2(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
         let limit_str = limit.to_string();
         let url = format!("{}/search", TIDAL_API_V2_URL);
         let country_code = self.country_code.clone();
@@ -1654,10 +1678,10 @@ impl TidalClient {
             ("supportsUserData", "true"),
             ("locale", "en_US"),
             ("deviceType", "BROWSER"),
-        ])?;
+        ]).await?;
 
         let status = resp.status();
-        let body = resp.text().unwrap_or_default();
+        let body = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("v2 search HTTP {}", status));
@@ -1666,7 +1690,7 @@ impl TidalClient {
         self.parse_search_response(&body, query, "v2")
     }
 
-    fn search_v1(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
+    async fn search_v1(&mut self, query: &str, limit: u32) -> Result<TidalSearchResults, String> {
         let limit_str = limit.to_string();
         let url = format!("{}/search", TIDAL_API_URL);
         let country_code = self.country_code.clone();
@@ -1680,10 +1704,10 @@ impl TidalClient {
             ("includeContributors", "true"),
             ("includeUserPlaylists", "true"),
             ("supportsUserData", "true"),
-        ])?;
+        ]).await?;
 
         let status = resp.status();
-        let body = resp.text().unwrap_or_default();
+        let body = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Search failed ({}): {}", status, body));
@@ -1744,7 +1768,7 @@ impl TidalClient {
     /// Fetch suggestions from Tidal's v2 /suggestions/ endpoint.
     /// Returns a SuggestionsResponse with text suggestions AND direct hit entities,
     /// exactly as the webapp's mini-search dropdown uses.
-    pub fn get_suggestions(&mut self, query: &str, limit: u32) -> SuggestionsResponse {
+    pub async fn get_suggestions(&mut self, query: &str, limit: u32) -> SuggestionsResponse {
         let empty = SuggestionsResponse { text_suggestions: vec![], direct_hits: vec![] };
         let url = format!("{}/suggestions/", TIDAL_API_V2_URL);
         let country_code = self.country_code.clone();
@@ -1754,11 +1778,11 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("explicit", "true"),
             ("hybrid", "true"),
-        ]);
+        ]).await;
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let body = r.text().unwrap_or_default();
+                let body = r.text().await.unwrap_or_default();
                 if let Some(result) = Self::parse_v2_suggestions_full(&body, limit) {
                     eprintln!("DEBUG suggestions v2: {} text, {} hits for '{}'",
                         result.text_suggestions.len(), result.direct_hits.len(), query);
@@ -1818,7 +1842,7 @@ impl TidalClient {
 
     /// Fetch the v2 home feed from api.tidal.com/v2/home/feed/static.
     /// Returns parsed sections, or empty vec on failure.
-    fn fetch_v2_home_feed(&mut self) -> Vec<HomePageSection> {
+    async fn fetch_v2_home_feed(&mut self) -> Vec<HomePageSection> {
         let url = format!("{}/home/feed/static", TIDAL_API_V2_URL);
         let country_code = self.country_code.clone();
 
@@ -1827,11 +1851,11 @@ impl TidalClient {
             ("locale", "en_US"),
             ("deviceType", "BROWSER"),
             ("platform", "WEB"),
-        ]);
+        ]).await;
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let body = r.text().unwrap_or_default();
+                let body = r.text().await.unwrap_or_default();
                 match serde_json::from_str::<Value>(&body) {
                     Ok(json) => {
                         let result = Self::parse_page_response(&json).unwrap_or_default();
@@ -1856,7 +1880,7 @@ impl TidalClient {
 
     /// Fetch feed activities from the v2 API (recently played, etc.).
     /// Returns a "Recently played" section, or empty vec on failure.
-    fn fetch_v2_feed_activities(&self) -> Vec<HomePageSection> {
+    async fn fetch_v2_feed_activities(&self) -> Vec<HomePageSection> {
         let tokens = match self.tokens.as_ref() {
             Some(t) => t,
             None => return vec![],
@@ -1877,11 +1901,11 @@ impl TidalClient {
                 ("locale", "en_US"),
                 ("deviceType", "BROWSER"),
             ])
-            .send();
+            .send().await;
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let body = r.text().unwrap_or_default();
+                let body = r.text().await.unwrap_or_default();
                 match serde_json::from_str::<Value>(&body) {
                     Ok(json) => {
                         // The activities response may contain items with track/album/playlist data.
@@ -1928,7 +1952,7 @@ impl TidalClient {
     }
 
     /// Fetch a single page endpoint. Handles both V1 and V2 response formats.
-    fn fetch_page_endpoint(&mut self, endpoint: &str) -> Result<Vec<HomePageSection>, String> {
+    async fn fetch_page_endpoint(&mut self, endpoint: &str) -> Result<Vec<HomePageSection>, String> {
         let url = format!("{}/{}", TIDAL_API_URL, endpoint);
         let country_code = self.country_code.clone();
 
@@ -1936,10 +1960,10 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("deviceType", "BROWSER"),
             ("locale", "en_US"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             eprintln!("Page endpoint {} failed ({}): {}", endpoint, status, &body[..body.len().min(200)]);
@@ -2010,30 +2034,30 @@ impl TidalClient {
     /// Fetch the full home page by calling multiple Tidal page endpoints.
     /// Tries the v2 home/feed/static endpoint first (what the web app uses),
     /// then falls back to the multi-endpoint v1 approach.
-    pub fn get_home_page(&mut self) -> Result<HomePageResponse, String> {
+    pub async fn get_home_page(&mut self) -> Result<HomePageResponse, String> {
         let mut all_sections = Vec::new();
         let mut seen_titles = std::collections::HashSet::new();
 
         // Try v2 home feed first (single endpoint, what the web app uses)
-        let v2_sections = self.fetch_v2_home_feed();
+        let v2_sections = self.fetch_v2_home_feed().await;
         if !v2_sections.is_empty() {
             eprintln!("DEBUG [v2 home/feed/static]: got {} sections", v2_sections.len());
             Self::add_unique_sections(&mut all_sections, &mut seen_titles, v2_sections);
         }
 
         // Primary home endpoint - has core sections like New Albums, The Hits, etc.
-        let home_sections = self.fetch_page_endpoint("pages/home")?;
+        let home_sections = self.fetch_page_endpoint("pages/home").await?;
         Self::add_unique_sections(&mut all_sections, &mut seen_titles, home_sections);
 
         // "For You" page - has personalized mixes, radio stations, recommendations
-        if let Ok(sections) = self.fetch_page_endpoint("pages/for_you") {
+        if let Ok(sections) = self.fetch_page_endpoint("pages/for_you").await {
             Self::add_unique_sections(&mut all_sections, &mut seen_titles, sections);
         }
 
         // My Mixes - personal mixes (My Mix 1-8, My Daily Discovery, etc.)
         // Note: pages/my_collection_my_mixes often returns untitled sections that
         // duplicate pages/for_you content, so we only add titled unique ones.
-        if let Ok(sections) = self.fetch_page_endpoint("pages/my_collection_my_mixes") {
+        if let Ok(sections) = self.fetch_page_endpoint("pages/my_collection_my_mixes").await {
             Self::add_unique_sections(&mut all_sections, &mut seen_titles, sections);
         }
 
@@ -2041,24 +2065,24 @@ impl TidalClient {
         for endpoint in &[
             "pages/explore",
         ] {
-            if let Ok(sections) = self.fetch_page_endpoint(endpoint) {
+            if let Ok(sections) = self.fetch_page_endpoint(endpoint).await {
                 Self::add_unique_sections(&mut all_sections, &mut seen_titles, sections);
             }
         }
 
         // Recently played / listening history via v2 feed activities
-        let activity_sections = self.fetch_v2_feed_activities();
+        let activity_sections = self.fetch_v2_feed_activities().await;
         if !activity_sections.is_empty() {
             Self::add_unique_sections(&mut all_sections, &mut seen_titles, activity_sections);
         }
 
         // Video content endpoint - disabled for now since the app can't play video
-        // if let Ok(sections) = self.fetch_page_endpoint("pages/videos") {
+        // if let Ok(sections) = self.fetch_page_endpoint("pages/videos").await {
         //     Self::add_unique_sections(&mut all_sections, &mut seen_titles, sections);
         // }
 
         // Rising / trending content - rename generic titles to avoid confusion
-        if let Ok(mut sections) = self.fetch_page_endpoint("pages/rising") {
+        if let Ok(mut sections) = self.fetch_page_endpoint("pages/rising").await {
             let rename_map: std::collections::HashMap<&str, &str> = [
                 ("Playlists", "Popular playlists on TIDAL"),
                 ("New Tracks", "Rising new tracks"),
@@ -2085,7 +2109,7 @@ impl TidalClient {
         // ---- Build synthetic sections from user data ----
         if let Some(user_id) = self.tokens.as_ref().and_then(|t| t.user_id) {
             // "Your listening history" from recently favorited tracks
-            match self.get_listening_history(user_id) {
+            match self.get_listening_history(user_id).await {
                 Ok(tracks) if tracks.as_array().map(|a| !a.is_empty()).unwrap_or(false) => {
                     all_sections.push(HomePageSection {
                         title: "Your listening history".to_string(),
@@ -2100,7 +2124,7 @@ impl TidalClient {
             }
 
             // "Albums you might like" from user's favorite albums
-            match self.get_favorite_albums_raw(user_id, 20) {
+            match self.get_favorite_albums_raw(user_id, 20).await {
                 Ok(albums) if albums.as_array().map(|a| !a.is_empty()).unwrap_or(false) => {
                     all_sections.push(HomePageSection {
                         title: "Albums you'll enjoy".to_string(),
@@ -2115,7 +2139,7 @@ impl TidalClient {
             }
 
             // "Playlists you'll love" from user's playlists
-            match self.get_user_playlists_raw(user_id, 20) {
+            match self.get_user_playlists_raw(user_id, 20).await {
                 Ok(playlists) if playlists.as_array().map(|a| !a.is_empty()).unwrap_or(false) => {
                     all_sections.push(HomePageSection {
                         title: "Playlists you'll love".to_string(),
@@ -2494,7 +2518,7 @@ impl TidalClient {
         })
     }
 
-    pub fn get_favorite_artists(&mut self, user_id: u64, limit: u32) -> Result<Vec<TidalArtistDetail>, String> {
+    pub async fn get_favorite_artists(&mut self, user_id: u64, limit: u32) -> Result<Vec<TidalArtistDetail>, String> {
         let url = format!("{}/users/{}/favorites/artists", TIDAL_API_URL, user_id);
         let limit_str = limit.to_string();
         let country_code = self.country_code.clone();
@@ -2505,10 +2529,10 @@ impl TidalClient {
             ("offset", "0"),
             ("order", "DATE"),
             ("orderDirection", "DESC"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("API error ({}): {}", status, body));
@@ -2531,7 +2555,7 @@ impl TidalClient {
     }
 
     /// Fetch user's favorite albums as raw JSON for home page sections.
-    fn get_favorite_albums_raw(&self, user_id: u64, limit: u32) -> Result<Value, String> {
+    async fn get_favorite_albums_raw(&self, user_id: u64, limit: u32) -> Result<Value, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -2546,10 +2570,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch favorite albums: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Favorite albums API error ({}): {}", status, body));
@@ -2571,7 +2596,7 @@ impl TidalClient {
     }
 
     /// Fetch user's favorite albums as structured data for the sidebar.
-    pub fn get_favorite_albums(&mut self, user_id: u64, limit: u32) -> Result<Vec<TidalAlbumDetail>, String> {
+    pub async fn get_favorite_albums(&mut self, user_id: u64, limit: u32) -> Result<Vec<TidalAlbumDetail>, String> {
         let url = format!("{}/users/{}/favorites/albums", TIDAL_API_URL, user_id);
         let country_code = self.country_code.clone();
 
@@ -2581,10 +2606,10 @@ impl TidalClient {
             ("offset", "0"),
             ("order", "DATE"),
             ("orderDirection", "DESC"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Favorite albums API error ({}): {}", status, body));
@@ -2609,7 +2634,7 @@ impl TidalClient {
     }
 
     /// Fetch user's playlists as raw JSON for home page sections.
-    fn get_user_playlists_raw(&self, user_id: u64, limit: u32) -> Result<Value, String> {
+    async fn get_user_playlists_raw(&self, user_id: u64, limit: u32) -> Result<Value, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         let response = self
@@ -2624,10 +2649,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch user playlists: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("User playlists API error ({}): {}", status, body));
@@ -2646,7 +2672,7 @@ impl TidalClient {
     }
 
     /// Fetch user's recently played tracks for the "listening history" section.
-    fn get_listening_history(&self, user_id: u64) -> Result<Value, String> {
+    async fn get_listening_history(&self, user_id: u64) -> Result<Value, String> {
         let tokens = self.tokens.as_ref().ok_or("Not authenticated")?;
 
         // Try the user's listening history via favorites/tracks (recent order)
@@ -2662,10 +2688,11 @@ impl TidalClient {
                 ("orderDirection", "DESC"),
             ])
             .send()
+            .await
             .map_err(|e| format!("Failed to fetch listening history: {}", e))?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Listening history API error ({}): {}", status, body));
@@ -2689,16 +2716,16 @@ impl TidalClient {
     // ==================== Artist Detail ====================
 
     /// Fetch full artist detail (name, picture, etc.)
-    pub fn get_artist_detail(&mut self, artist_id: u64) -> Result<TidalArtistDetail, String> {
+    pub async fn get_artist_detail(&mut self, artist_id: u64) -> Result<TidalArtistDetail, String> {
         let url = format!("{}/artists/{}", TIDAL_API_URL, artist_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Artist detail API error ({}): {}", status, body));
@@ -2712,16 +2739,16 @@ impl TidalClient {
 
     /// Fetch the tracks in a mix (custom mixes, radio stations, etc.)
     /// Tidal mixes use a string mixId like "00e4f8f7a5bd..."
-    pub fn get_mix_items(&mut self, mix_id: &str) -> Result<Vec<TidalTrack>, String> {
+    pub async fn get_mix_items(&mut self, mix_id: &str) -> Result<Vec<TidalTrack>, String> {
         let url = format!("{}/mixes/{}/items", TIDAL_API_URL, mix_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Mix items API error ({}): {}", status, body));
@@ -2747,7 +2774,7 @@ impl TidalClient {
     // ==================== Artist Page ====================
 
     /// Fetch an artist's top tracks
-    pub fn get_artist_top_tracks(&mut self, artist_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
+    pub async fn get_artist_top_tracks(&mut self, artist_id: u64, limit: u32) -> Result<Vec<TidalTrack>, String> {
         let url = format!("{}/artists/{}/toptracks", TIDAL_API_URL, artist_id);
         let limit_str = limit.to_string();
         let country_code = self.country_code.clone();
@@ -2756,10 +2783,10 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("limit", &limit_str),
             ("offset", "0"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Artist top tracks API error ({}): {}", status, body));
@@ -2779,7 +2806,7 @@ impl TidalClient {
     }
 
     /// Fetch an artist's albums
-    pub fn get_artist_albums(&mut self, artist_id: u64, limit: u32) -> Result<Vec<TidalAlbumDetail>, String> {
+    pub async fn get_artist_albums(&mut self, artist_id: u64, limit: u32) -> Result<Vec<TidalAlbumDetail>, String> {
         let url = format!("{}/artists/{}/albums", TIDAL_API_URL, artist_id);
         let limit_str = limit.to_string();
         let country_code = self.country_code.clone();
@@ -2788,10 +2815,10 @@ impl TidalClient {
             ("countryCode", &country_code),
             ("limit", &limit_str),
             ("offset", "0"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Artist albums API error ({}): {}", status, body));
@@ -2810,16 +2837,16 @@ impl TidalClient {
     }
 
     /// Fetch artist bio text
-    pub fn get_artist_bio(&mut self, artist_id: u64) -> Result<String, String> {
+    pub async fn get_artist_bio(&mut self, artist_id: u64) -> Result<String, String> {
         let url = format!("{}/artists/{}/bio", TIDAL_API_URL, artist_id);
         let country_code = self.country_code.clone();
 
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Ok(String::new()); // Bio not always available
@@ -2829,7 +2856,7 @@ impl TidalClient {
         Ok(json.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string())
     }
 
-    pub fn get_page(&mut self, api_path: &str) -> Result<HomePageResponse, String> {
+    pub async fn get_page(&mut self, api_path: &str) -> Result<HomePageResponse, String> {
         let url = if api_path.starts_with("http") {
             api_path.to_string()
         } else {
@@ -2840,10 +2867,10 @@ impl TidalClient {
         let response = self.authenticated_get(&url, &[
             ("countryCode", &country_code),
             ("deviceType", "BROWSER"),
-        ])?;
+        ]).await?;
 
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             return Err(format!("Page API error ({}): {}", status, body));
