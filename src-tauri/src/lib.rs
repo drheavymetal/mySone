@@ -222,6 +222,8 @@ pub fn run() {
             commands::playback::get_playback_position,
             commands::playback::seek_track,
             commands::playback::is_track_finished,
+            commands::playback::save_playback_queue,
+            commands::playback::load_playback_queue,
             // utility
             commands::utility::get_image_bytes,
         ])

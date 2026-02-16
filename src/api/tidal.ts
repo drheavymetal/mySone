@@ -354,3 +354,13 @@ export async function parseTokenData(
 }> {
   return await invoke("parse_token_data", { rawText });
 }
+
+// ==================== Playback queue persistence ====================
+
+export async function savePlaybackQueue(snapshotJson: string): Promise<void> {
+  return invoke("save_playback_queue", { snapshotJson });
+}
+
+export async function loadPlaybackQueue(): Promise<string | null> {
+  return invoke("load_playback_queue");
+}

@@ -35,7 +35,7 @@ import { drawerOpenAtom } from "../atoms/ui";
 // Stable action callbacks (no atom subscriptions)
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useFavorites } from "../hooks/useFavorites";
-import { clearCache } from "../api/tidal";
+import { clearCache, savePlaybackQueue, loadPlaybackQueue } from "../api/tidal";
 
 import type { AuthTokens, Playlist, Track, PlaybackSnapshot } from "../types";
 
@@ -177,42 +177,59 @@ export function AppInitializer() {
   }, []);
 
   // ================================================================
-  //  PLAYBACK RESTORE from localStorage (one-time)
+  //  PLAYBACK RESTORE from backend disk cache → localStorage fallback
   // ================================================================
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PLAYBACK_STATE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<PlaybackSnapshot>;
+    const restoreSnapshot = (raw: string) => {
+      const parsed = JSON.parse(raw) as Partial<PlaybackSnapshot>;
 
-        if (
-          parsed.currentTrack &&
-          typeof parsed.currentTrack.id === "number"
-        ) {
-          setCurrentTrack(parsed.currentTrack as Track);
-        }
-
-        if (Array.isArray(parsed.queue)) {
-          setQueue(
-            parsed.queue.filter(
-              (t): t is Track => !!t && typeof t.id === "number"
-            )
-          );
-        }
-
-        if (Array.isArray(parsed.history)) {
-          setHistory(
-            parsed.history.filter(
-              (t): t is Track => !!t && typeof t.id === "number"
-            )
-          );
-        }
+      if (
+        parsed.currentTrack &&
+        typeof parsed.currentTrack.id === "number"
+      ) {
+        setCurrentTrack(parsed.currentTrack as Track);
       }
-    } catch (err) {
-      console.error("Failed to restore playback state:", err);
-    } finally {
+
+      if (Array.isArray(parsed.queue)) {
+        setQueue(
+          parsed.queue.filter(
+            (t): t is Track => !!t && typeof t.id === "number"
+          )
+        );
+      }
+
+      if (Array.isArray(parsed.history)) {
+        setHistory(
+          parsed.history.filter(
+            (t): t is Track => !!t && typeof t.id === "number"
+          )
+        );
+      }
+    };
+
+    const restore = async () => {
+      try {
+        // Try backend disk cache first (survives app restarts reliably)
+        const backendRaw = await loadPlaybackQueue();
+        if (backendRaw) {
+          restoreSnapshot(backendRaw);
+          return;
+        }
+      } catch {
+        // Backend unavailable — fall through to localStorage
+      }
+
+      try {
+        const raw = localStorage.getItem(PLAYBACK_STATE_KEY);
+        if (raw) restoreSnapshot(raw);
+      } catch (err) {
+        console.error("Failed to restore playback state:", err);
+      }
+    };
+
+    restore().finally(() => {
       hasRestoredPlaybackRef.current = true;
-    }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -231,10 +248,13 @@ export function AppInitializer() {
   // ================================================================
   //  PLAYBACK PERSISTENCE (reactive — persists on every state change)
   //  Uses store.sub() to listen for changes without React re-renders.
+  //  Writes to localStorage immediately + debounced backend disk save.
   // ================================================================
   useEffect(() => {
     // Wait until restore has run
     if (!hasRestoredPlaybackRef.current) return;
+
+    let backendTimer: ReturnType<typeof setTimeout> | null = null;
 
     const persist = () => {
       if (!playbackPersistReady.current) {
@@ -246,11 +266,20 @@ export function AppInitializer() {
         queue: store.get(queueAtom),
         history: store.get(historyAtom),
       };
+      const json = JSON.stringify(snapshot);
+
+      // Immediate localStorage write
       try {
-        localStorage.setItem(PLAYBACK_STATE_KEY, JSON.stringify(snapshot));
+        localStorage.setItem(PLAYBACK_STATE_KEY, json);
       } catch (err) {
         console.error("Failed to persist playback state:", err);
       }
+
+      // Debounced backend disk write (2s) to avoid excessive I/O
+      if (backendTimer) clearTimeout(backendTimer);
+      backendTimer = setTimeout(() => {
+        savePlaybackQueue(json).catch(() => {});
+      }, 2000);
     };
 
     // Subscribe directly to the atoms we care about — no React re-render
@@ -262,6 +291,7 @@ export function AppInitializer() {
       unsub1();
       unsub2();
       unsub3();
+      if (backendTimer) clearTimeout(backendTimer);
     };
   }, [store]);
 
