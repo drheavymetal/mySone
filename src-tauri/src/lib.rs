@@ -2,6 +2,8 @@ mod audio;
 pub mod cache;
 mod commands;
 mod error;
+#[cfg(target_os = "linux")]
+mod mpris;
 mod tidal_api;
 
 pub use error::SoneError;
@@ -44,6 +46,8 @@ pub struct AppState {
     pub disk_cache: DiskCache,
     pub minimize_to_tray: AtomicBool,
     pub volume_normalization: AtomicBool,
+    #[cfg(target_os = "linux")]
+    pub mpris: mpris::MprisHandle,
 }
 
 pub fn now_secs() -> u64 {
@@ -74,13 +78,15 @@ impl AppState {
         let volume_normalization = saved.as_ref().map(|s| s.volume_normalization).unwrap_or(false);
 
         Self {
-            audio_player: AudioPlayer::new(app_handle),
+            audio_player: AudioPlayer::new(app_handle.clone()),
             tidal_client: Mutex::new(TidalClient::new()),
             settings_path,
             cache_dir,
             disk_cache,
             minimize_to_tray: AtomicBool::new(minimize_to_tray),
             volume_normalization: AtomicBool::new(volume_normalization),
+            #[cfg(target_os = "linux")]
+            mpris: mpris::MprisHandle::new(app_handle),
         }
     }
 
@@ -320,6 +326,8 @@ pub fn run() {
             commands::playback::is_track_finished,
             commands::playback::save_playback_queue,
             commands::playback::load_playback_queue,
+            commands::playback::update_mpris_metadata,
+            commands::playback::update_mpris_playback_status,
             // utility
             commands::utility::get_image_bytes,
             commands::utility::get_cache_stats,

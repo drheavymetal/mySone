@@ -47,6 +47,7 @@ import {
 } from "../api/tidal";
 
 import type { AuthTokens, Playlist, Track, PlaybackSnapshot } from "../types";
+import { getTidalImageUrl } from "../types";
 
 const PLAYBACK_STATE_KEY = "tide-vibe.playback-state.v1";
 
@@ -389,6 +390,57 @@ export function AppInitializer() {
     const unsub = store.sub(currentTrackAtom, updateTooltip);
     return unsub;
   }, [store]);
+
+  // ================================================================
+  //  MPRIS — push metadata & playback status to backend for D-Bus
+  // ================================================================
+  useEffect(() => {
+    const pushMetadata = () => {
+      const track = store.get(currentTrackAtom);
+      if (!track) return;
+      invoke("update_mpris_metadata", {
+        metadata: {
+          title: track.title,
+          artist: track.artist?.name || "Unknown",
+          album: track.album?.title || "",
+          artUrl: getTidalImageUrl(track.album?.cover, 320),
+          durationSecs: track.duration,
+        },
+      }).catch(() => {});
+    };
+
+    pushMetadata();
+    const unsub = store.sub(currentTrackAtom, pushMetadata);
+    return unsub;
+  }, [store]);
+
+  useEffect(() => {
+    const pushStatus = () => {
+      const playing = store.get(isPlayingAtom);
+      invoke("update_mpris_playback_status", { isPlaying: playing }).catch(() => {});
+    };
+
+    pushStatus();
+    const unsub = store.sub(isPlayingAtom, pushStatus);
+    return unsub;
+  }, [store]);
+
+  useEffect(() => {
+    const unlistenSeek = listen<number>("mpris:seek", async (event) => {
+      try {
+        const current = await invoke<number>("get_playback_position");
+        const newPos = Math.max(0, current + event.payload);
+        await invoke("seek_track", { positionSecs: newPos });
+      } catch {}
+    });
+    const unlistenVolume = listen<number>("mpris:set-volume", (event) => {
+      setVolume(Math.max(0, Math.min(1, event.payload)));
+    });
+    return () => {
+      unlistenSeek.then((fn) => fn());
+      unlistenVolume.then((fn) => fn());
+    };
+  }, [setVolume]);
 
   // ================================================================
   //  KEYBOARD SHORTCUTS

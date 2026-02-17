@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use serde::Deserialize;
 use tauri::State;
 
 use crate::AppState;
@@ -90,12 +91,20 @@ pub fn resume_track(state: State<'_, AppState>) -> Result<(), SoneError> {
 #[tauri::command]
 pub fn stop_track(state: State<'_, AppState>) -> Result<(), SoneError> {
     log::debug!("[stop_track]");
-    state.audio_player.stop().map_err(SoneError::Audio)
+    let result = state.audio_player.stop().map_err(SoneError::Audio);
+    #[cfg(target_os = "linux")]
+    state.mpris.send(crate::mpris::MprisCommand::Stop);
+    result
 }
 
 #[tauri::command]
 pub fn set_volume(state: State<'_, AppState>, level: f32) -> Result<(), SoneError> {
     state.audio_player.set_volume(level).map_err(SoneError::Audio)?;
+
+    #[cfg(target_os = "linux")]
+    state.mpris.send(crate::mpris::MprisCommand::SetVolume {
+        volume: level as f64,
+    });
 
     // Save volume to settings
     if let Some(mut settings) = state.load_settings() {
@@ -114,7 +123,12 @@ pub fn get_playback_position(state: State<'_, AppState>) -> Result<f32, SoneErro
 #[tauri::command(rename_all = "camelCase")]
 pub fn seek_track(state: State<'_, AppState>, position_secs: f32) -> Result<(), SoneError> {
     log::debug!("[seek_track]: position_secs={:.1}", position_secs);
-    state.audio_player.seek(position_secs).map_err(SoneError::Audio)
+    let result = state.audio_player.seek(position_secs).map_err(SoneError::Audio);
+    #[cfg(target_os = "linux")]
+    state.mpris.send(crate::mpris::MprisCommand::Seeked {
+        position_secs: position_secs as f64,
+    });
+    result
 }
 
 #[tauri::command]
@@ -131,4 +145,38 @@ pub fn save_playback_queue(state: State<'_, AppState>, snapshot_json: String) ->
 #[tauri::command(rename_all = "camelCase")]
 pub fn load_playback_queue(state: State<'_, AppState>) -> Result<Option<String>, SoneError> {
     Ok(state.read_state_file("queue.json"))
+}
+
+// ---- MPRIS metadata/status commands ----
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MprisMetadata {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub art_url: String,
+    pub duration_secs: f64,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+#[allow(unused_variables)]
+pub fn update_mpris_metadata(state: State<'_, AppState>, metadata: MprisMetadata) -> Result<(), SoneError> {
+    #[cfg(target_os = "linux")]
+    state.mpris.send(crate::mpris::MprisCommand::SetMetadata {
+        title: metadata.title,
+        artist: metadata.artist,
+        album: metadata.album,
+        art_url: metadata.art_url,
+        duration_secs: metadata.duration_secs,
+    });
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+#[allow(unused_variables)]
+pub fn update_mpris_playback_status(state: State<'_, AppState>, is_playing: bool) -> Result<(), SoneError> {
+    #[cfg(target_os = "linux")]
+    state.mpris.send(crate::mpris::MprisCommand::SetPlaybackStatus { is_playing });
+    Ok(())
 }
