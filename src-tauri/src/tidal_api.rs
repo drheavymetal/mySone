@@ -1525,7 +1525,7 @@ impl TidalClient {
             ("countryCode", &cc),
             ("locale", "en_US"),
             ("deviceType", "BROWSER"),
-            ("limit", "2000"),
+            ("limit", "50"),
             ("offset", "0"),
         ]).await?;
 
