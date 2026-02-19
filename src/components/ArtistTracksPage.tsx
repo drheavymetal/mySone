@@ -53,8 +53,16 @@ export default function ArtistTracksPage({
         if (!cancelled) setTracks(data);
       } catch (err: any) {
         if (!cancelled) {
-          const msg = err?.message;
-          setError(typeof msg === "string" ? msg : "Failed to load tracks");
+          console.error("[ArtistTracksPage] load error:", err);
+          const parsed = typeof err === "string" ? (() => { try { return JSON.parse(err); } catch { return null; } })() : err;
+          const msg = parsed?.message;
+          if (typeof msg === "string") {
+            setError(msg);
+          } else if (msg && typeof msg === "object") {
+            setError(`API ${msg.status}: ${typeof msg.body === "string" ? msg.body.slice(0, 200) : JSON.stringify(msg.body).slice(0, 200)}`);
+          } else {
+            setError(typeof err === "string" ? err : "Failed to load tracks");
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);

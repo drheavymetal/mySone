@@ -7,6 +7,7 @@ use std::time::Duration;
 const TIDAL_AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
 const TIDAL_API_URL: &str = "https://api.tidal.com/v1";
 const TIDAL_API_V2_URL: &str = "https://api.tidal.com/v2";
+const TIDAL_CLIENT_VERSION: &str = "2025.11.3";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthTokens {
@@ -552,10 +553,9 @@ impl TidalClient {
             format!("{}{}", TIDAL_API_URL, path)
         };
         let response = self.authenticated_get(&url, query).await?;
-        let resp_url = response.url();
-        let resp_host = resp_url.host_str().unwrap_or("");
-        if !url.contains(resp_host) {
-            log::warn!("[api_get_body] redirect: {} -> {}", url, resp_url);
+        let resp_url = response.url().to_string();
+        if url != resp_url && !resp_url.starts_with(&url) {
+            log::warn!("[api_get_body] possible redirect: requested={} responded={}", url, resp_url);
         }
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
@@ -572,12 +572,13 @@ impl TidalClient {
         let access_token = self.tokens.as_ref().ok_or(SoneError::NotAuthenticated)?.access_token.clone();
 
         // 2. Make first request
-        let response = self.client
+        let mut req = self.client
             .get(url)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .query(query)
-            .send()
-            .await?;
+            .header("Authorization", format!("Bearer {}", access_token));
+        if url.contains("/v2/") {
+            req = req.header("x-tidal-client-version", TIDAL_CLIENT_VERSION);
+        }
+        let response = req.query(query).send().await?;
 
         // 3. Check 401
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -587,12 +588,13 @@ impl TidalClient {
              log::debug!("Refresh successful, retrying request...");
 
              // 5. Retry request
-             return Ok(self.client
+             let mut req = self.client
                 .get(url)
-                .header("Authorization", format!("Bearer {}", new_tokens.access_token))
-                .query(query)
-                .send()
-                .await?);
+                .header("Authorization", format!("Bearer {}", new_tokens.access_token));
+             if url.contains("/v2/") {
+                 req = req.header("x-tidal-client-version", TIDAL_CLIENT_VERSION);
+             }
+             return Ok(req.query(query).send().await?);
         }
 
         Ok(response)
@@ -2955,12 +2957,27 @@ impl TidalClient {
 
     pub async fn get_artist_page(&mut self, artist_id: u64) -> Result<Value, SoneError> {
         let cc = self.country_code.clone();
+        // Try v2 first
+        let v2_url = format!("{}/artist/{}", TIDAL_API_V2_URL, artist_id);
+        match self.api_get_body(
+            &v2_url,
+            &[("countryCode", &cc), ("locale", "en_US"), ("deviceType", "BROWSER"), ("platform", "WEB")],
+        ).await {
+            Ok(body) => {
+                return serde_json::from_str(&body)
+                    .map_err(|e| SoneError::Parse(format!("artist page v2 JSON: {}", e)));
+            }
+            Err(e) => {
+                log::warn!("[get_artist_page] v2 failed for artist {}: {:?}, falling back to v1", artist_id, e);
+            }
+        }
+        // Fallback to v1
         let body = self.api_get_body(
             &format!("/pages/artist?artistId={}", artist_id),
             &[("countryCode", &cc), ("deviceType", "BROWSER"), ("locale", "en_US")],
         ).await?;
         serde_json::from_str(&body)
-            .map_err(|e| SoneError::Parse(format!("artist page JSON: {}", e)))
+            .map_err(|e| SoneError::Parse(format!("artist page v1 JSON: {}", e)))
     }
 
     pub async fn get_artist_top_tracks_all(&mut self, artist_id: u64) -> Result<Value, SoneError> {

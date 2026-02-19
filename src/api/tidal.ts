@@ -354,8 +354,59 @@ export async function getArtistPage(artistId: number): Promise<ArtistPageData> {
   }, TTL.MEDIUM);
 }
 
-/** Parse the raw v1 pages/artist response into a structured ArtistPageData */
+/** Parse raw artist page response — detects v2 (json.item) vs v1 (json.rows) */
 function parseArtistPageResponse(json: any): ArtistPageData {
+  if (json?.item) return parseArtistPageV2(json);
+  return parseArtistPageV1(json);
+}
+
+const V2_TYPE_TO_SECTION: Record<string, string> = {
+  TRACK: "TRACK_LIST",
+  ALBUM: "ALBUM_LIST",
+  ARTIST: "ARTIST_LIST",
+  PLAYLIST: "PLAYLIST_LIST",
+  MIX: "MIX_LIST",
+};
+
+function parseArtistPageV2(json: any): ArtistPageData {
+  const result: ArtistPageData = {
+    artistName: json.item?.data?.name || "",
+    picture: json.item?.data?.picture,
+    bio: json.header?.biography?.text,
+    bioSource: json.header?.biography?.source,
+    topTracks: [],
+    sections: [],
+  };
+
+  const modules = json.items;
+  if (!Array.isArray(modules)) return result;
+
+  for (const mod of modules) {
+    const rawItems: any[] = mod.items || [];
+    if (rawItems.length === 0) continue;
+
+    const firstType = rawItems[0]?.type as string;
+    if (firstType === "VIDEO" || firstType === "TRACK_CREDITS") continue;
+
+    const sectionType = V2_TYPE_TO_SECTION[firstType] || firstType;
+    const items = rawItems.map((i: any) => i.data || i);
+
+    if (sectionType === "TRACK_LIST" && result.topTracks.length === 0) {
+      result.topTracks = items;
+    }
+
+    result.sections.push({
+      title: mod.title || "",
+      type: sectionType,
+      items,
+      apiPath: mod.viewAll,
+    });
+  }
+
+  return result;
+}
+
+function parseArtistPageV1(json: any): ArtistPageData {
   const result: ArtistPageData = {
     artistName: "",
     topTracks: [],
@@ -373,7 +424,6 @@ function parseArtistPageResponse(json: any): ArtistPageData {
       const type = mod?.type as string;
       const title = (mod?.title || "") as string;
 
-      // Artist header module — contains name, picture, bio
       if (type === "ARTIST_HEADER") {
         const artist = mod?.artist;
         if (artist) {
@@ -388,30 +438,19 @@ function parseArtistPageResponse(json: any): ArtistPageData {
         continue;
       }
 
-      // Extract items from pagedList (v1 format)
       const items = mod?.pagedList?.items;
       if (!Array.isArray(items) || items.length === 0) continue;
 
-      // Track list — first one becomes the playable "top tracks"
       if (type === "TRACK_LIST") {
         if (result.topTracks.length === 0) {
           result.topTracks = items;
         }
-        console.log("[parseArtistPage] TRACK_LIST showMore:", JSON.stringify(mod?.showMore));
         result.sections.push({ title: title || "Popular tracks", type: "TRACK_LIST", items, apiPath: mod?.showMore?.apiPath });
         continue;
       }
 
-      // Determine section type from module type
-      let sectionType = type;
-      if (type === "ALBUM_LIST") sectionType = "ALBUM_LIST";
-      else if (type === "ARTIST_LIST") sectionType = "ARTIST_LIST";
-      else if (type === "PLAYLIST_LIST") sectionType = "PLAYLIST_LIST";
-      else if (type === "MIX_LIST") sectionType = "MIX_LIST";
-      else if (type === "VIDEO_LIST") sectionType = "VIDEO_LIST";
-
       if (title || items.length > 0) {
-        result.sections.push({ title, type: sectionType, items, apiPath: mod?.showMore?.apiPath });
+        result.sections.push({ title, type, items, apiPath: mod?.showMore?.apiPath });
       }
     }
   }

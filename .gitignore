@@ -30,3 +30,6 @@ docs/
 .claude/
 *claude*
 *CLAUDE*
+
+# local files
+nocommit
