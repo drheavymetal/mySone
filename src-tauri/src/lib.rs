@@ -325,6 +325,7 @@ pub fn run() {
             commands::library::create_playlist,
             commands::library::add_track_to_playlist,
             commands::library::remove_track_from_playlist,
+            commands::library::delete_playlist,
             commands::library::get_favorite_tracks,
             commands::library::get_favorite_track_ids,
             commands::library::is_track_favorited,

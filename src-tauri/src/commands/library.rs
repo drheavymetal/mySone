@@ -337,6 +337,21 @@ pub async fn remove_track_from_playlist(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn delete_playlist(
+    state: State<'_, AppState>,
+    user_id: u64,
+    playlist_id: String,
+) -> Result<(), SoneError> {
+    log::debug!("[delete_playlist]: user_id={}, playlist_id={}", user_id, playlist_id);
+    let client = state.tidal_client.lock().await;
+    client.delete_playlist(&playlist_id).await?;
+    drop(client);
+    state.disk_cache.invalidate_tag(&format!("user:{}", user_id)).await;
+    state.disk_cache.invalidate_tag(&format!("playlist:{}", playlist_id)).await;
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_favorite_tracks(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,

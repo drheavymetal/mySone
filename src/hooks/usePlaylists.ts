@@ -1,7 +1,7 @@
 import { useCallback } from "react";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
-import { userPlaylistsAtom, favoritePlaylistsAtom } from "../atoms/playlists";
+import { userPlaylistsAtom, favoritePlaylistsAtom, deletedPlaylistIdsAtom } from "../atoms/playlists";
 import { authTokensAtom } from "../atoms/auth";
 import { invalidateCache } from "../api/tidal";
 import type { Playlist } from "../types";
@@ -9,6 +9,8 @@ import type { Playlist } from "../types";
 export function usePlaylists() {
   const [userPlaylists, setUserPlaylists] = useAtom(userPlaylistsAtom);
   const favoritePlaylists = useAtomValue(favoritePlaylistsAtom);
+  const setFavoritePlaylists = useSetAtom(favoritePlaylistsAtom);
+  const setDeletedPlaylistIds = useSetAtom(deletedPlaylistIdsAtom);
   const authTokens = useAtomValue(authTokensAtom);
 
   const createPlaylist = useCallback(
@@ -64,6 +66,29 @@ export function usePlaylists() {
     []
   );
 
+  const deletePlaylist = useCallback(
+    async (playlistId: string): Promise<void> => {
+      if (!authTokens?.user_id) throw new Error("Not authenticated");
+      try {
+        await invoke("delete_playlist", {
+          userId: authTokens.user_id,
+          playlistId,
+        });
+        setUserPlaylists((prev) => prev.filter((p) => p.uuid !== playlistId));
+        setFavoritePlaylists((prev) => prev.filter((p) => p.uuid !== playlistId));
+        setDeletedPlaylistIds((prev: Set<string>) => new Set(prev).add(playlistId));
+        invalidateCache(`playlist:${playlistId}`);
+        invalidateCache(`playlist-page:${playlistId}`);
+        invalidateCache("user-playlists");
+        invalidateCache("fav-playlists");
+      } catch (error: any) {
+        console.error("Failed to delete playlist:", error);
+        throw error;
+      }
+    },
+    [authTokens?.user_id, setUserPlaylists, setFavoritePlaylists, setDeletedPlaylistIds]
+  );
+
   const addTracksToPlaylist = useCallback(
     async (playlistId: string, trackIds: number[]): Promise<void> => {
       try {
@@ -85,6 +110,7 @@ export function usePlaylists() {
     userPlaylists,
     favoritePlaylists,
     createPlaylist,
+    deletePlaylist,
     addTrackToPlaylist,
     removeTrackFromPlaylist,
     addTracksToPlaylist,

@@ -20,7 +20,7 @@ import {
   authTokensAtom,
   userNameAtom,
 } from "../atoms/auth";
-import { userPlaylistsAtom, favoritePlaylistsAtom } from "../atoms/playlists";
+import { userPlaylistsAtom, favoritePlaylistsAtom, deletedPlaylistIdsAtom } from "../atoms/playlists";
 import {
   favoriteTrackIdsAtom,
   favoriteAlbumIdsAtom,
@@ -93,6 +93,9 @@ export function AppInitializer() {
 
   // ---- Navigation ----
   const setCurrentView = useSetAtom(currentViewAtom);
+  const deletedPlaylistIds = useAtomValue(deletedPlaylistIdsAtom);
+  const deletedPlaylistIdsRef = useRef(deletedPlaylistIds);
+  deletedPlaylistIdsRef.current = deletedPlaylistIds;
 
   // ---- Refs ----
   const hasRestoredPlaybackRef = useRef(false);
@@ -601,7 +604,16 @@ export function AppInitializer() {
     }
 
     const handler = (event: PopStateEvent) => {
-      if (event.state) startTransition(() => setCurrentView(event.state));
+      if (!event.state) return;
+      // Skip deleted playlist entries — go back further
+      if (
+        event.state.type === "playlist" &&
+        deletedPlaylistIdsRef.current.has(event.state.playlistId)
+      ) {
+        window.history.back();
+        return;
+      }
+      startTransition(() => setCurrentView(event.state));
     };
 
     window.addEventListener("popstate", handler);

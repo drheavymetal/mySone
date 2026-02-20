@@ -7,13 +7,18 @@ import {
   Loader2,
   UserPlus,
   UserCheck,
+  Trash2,
 } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, startTransition } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useToast } from "../contexts/ToastContext";
 import { type MediaItemType, type Track } from "../types";
 import { fetchMediaTracks } from "../api/tidal";
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useFavorites } from "../hooks/useFavorites";
+import { usePlaylists } from "../hooks/usePlaylists";
+import { userPlaylistsAtom } from "../atoms/playlists";
+import { currentViewAtom } from "../atoms/navigation";
 import AddToPlaylistMenu from "./AddToPlaylistMenu";
 
 interface MediaContextMenuProps {
@@ -48,6 +53,10 @@ export default function MediaContextMenu({
     removeFavoriteMix,
   } = useFavorites();
   const { showToast } = useToast();
+  const { deletePlaylist } = usePlaylists();
+  const currentView = useAtomValue(currentViewAtom);
+  const setCurrentView = useSetAtom(currentViewAtom);
+  const userPlaylists = useAtomValue(userPlaylistsAtom);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number }>({
@@ -63,9 +72,17 @@ export default function MediaContextMenu({
   const [fetchingForPlaylist, setFetchingForPlaylist] = useState(false);
   const playlistBtnRef = useRef<HTMLButtonElement | null>(null);
 
+  // Delete playlist confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   // Library favorite state
   const [isFav, setIsFav] = useState<boolean | null>(null);
   const [checkingFav, setCheckingFav] = useState(false);
+
+  // Ownership check: is this a user-created playlist?
+  const isUserPlaylist =
+    item.type === "playlist" &&
+    userPlaylists.some((p) => p.uuid === item.uuid);
 
   // Derive favorite status from atoms (no API call needed)
   useEffect(() => {
@@ -121,7 +138,7 @@ export default function MediaContextMenu({
 
   // Close on click outside
   useEffect(() => {
-    if (showPlaylistSubmenu) return;
+    if (showPlaylistSubmenu || showDeleteConfirm) return;
 
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -139,7 +156,7 @@ export default function MediaContextMenu({
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [onClose, showPlaylistSubmenu]);
+  }, [onClose, showPlaylistSubmenu, showDeleteConfirm]);
 
   /** Short display label for the media item */
   const rawLabel = item.type === "artist" ? item.name : item.title;
@@ -262,6 +279,26 @@ export default function MediaContextMenu({
 
   const isLoading = (action: string) => loadingAction === action;
 
+  const handleDeletePlaylist = useCallback(async () => {
+    if (item.type !== "playlist") return;
+    setLoadingAction("delete");
+    try {
+      await deletePlaylist(item.uuid);
+      showToast(`Deleted "${itemLabel}"`);
+      if (currentView.type === "playlist" && currentView.playlistId === item.uuid) {
+        // Replace current history entry so back button doesn't return to deleted playlist
+        const homeView = { type: "home" as const };
+        window.history.replaceState(homeView, "");
+        startTransition(() => setCurrentView(homeView));
+      }
+    } catch (err) {
+      console.error("Failed to delete playlist:", err);
+      showToast("Failed to delete playlist", "error");
+    }
+    setLoadingAction(null);
+    onClose();
+  }, [item, deletePlaylist, itemLabel, currentView, setCurrentView, onClose, showToast]);
+
   // Whether "Add to library" / "Follow" is supported for this item type
   const canFavorite = item.type === "album" || item.type === "playlist" || item.type === "artist" || item.type === "mix";
 
@@ -359,7 +396,55 @@ export default function MediaContextMenu({
             </button>
           </>
         )}
+
+        {/* Delete playlist (only for user-created playlists) */}
+        {isUserPlaylist && (
+          <>
+            <div className="my-1 border-t border-th-inset" />
+            <button
+              className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] transition-colors text-left text-[14px] text-th-error hover:text-th-error"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={!!loadingAction}
+            >
+              <Trash2 size={18} className="shrink-0" />
+              <span>Delete playlist</span>
+            </button>
+          </>
+        )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-center justify-center"
+          onClick={() => setShowDeleteConfirm(false)}
+        >
+          <div
+            className="bg-th-elevated rounded-xl shadow-2xl max-w-[400px] w-[90%] p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-2">Delete playlist?</h3>
+            <p className="text-sm text-th-text-secondary mb-6">
+              Are you sure you want to delete "{rawLabel}"? This can't be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                className="px-4 py-2 rounded-lg text-sm font-medium text-th-text-secondary hover:text-white hover:bg-white/[0.06] transition-colors"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-th-error text-white hover:brightness-110 transition-all disabled:opacity-50"
+                onClick={handleDeletePlaylist}
+                disabled={!!loadingAction}
+              >
+                {isLoading("delete") ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add to playlist submenu */}
       {showPlaylistSubmenu && playlistTrackIds && (

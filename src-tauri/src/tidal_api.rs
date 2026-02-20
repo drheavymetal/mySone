@@ -905,6 +905,45 @@ impl TidalClient {
         Ok(())
     }
 
+    pub async fn delete_playlist(&self, playlist_id: &str) -> Result<(), SoneError> {
+        let tokens = self.tokens.as_ref().ok_or(SoneError::NotAuthenticated)?;
+
+        // First, get the playlist ETag which is required for modifications
+        let head_response = self
+            .client
+            .get(format!("{}/playlists/{}", TIDAL_API_URL, playlist_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .query(&[("countryCode", self.country_code.as_str())])
+            .send()
+            .await?;
+
+        let etag = head_response
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("*")
+            .to_string();
+
+        // Delete the playlist
+        let response = self
+            .client
+            .delete(format!("{}/playlists/{}", TIDAL_API_URL, playlist_id))
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .header("If-None-Match", &etag)
+            .query(&[("countryCode", self.country_code.as_str())])
+            .send()
+            .await?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(SoneError::Api { status: status.as_u16(), body });
+        }
+
+        Ok(())
+    }
+
     pub async fn get_favorite_playlist_uuids(&self, user_id: u64) -> Result<Vec<String>, SoneError> {
         let tokens = self.tokens.as_ref().ok_or(SoneError::NotAuthenticated)?;
         let response = self
