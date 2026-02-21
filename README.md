@@ -1,92 +1,81 @@
-# SONE - Tidal Streaming Client for Linux
+# SONE
 
-A native Linux music player that streams from Tidal with bit-perfect audio quality.
+An unofficial native Linux desktop client for [Tidal](https://tidal.com) music streaming.
+
+**A valid Tidal account and subscription is required.** SONE does not provide access to any content — it connects to Tidal's service using your own credentials, the same way the official apps do on other platforms. This project exists because Tidal does not offer an official desktop client for Linux.
 
 ## Features
 
-- 🎵 **Tidal Streaming**: Full integration with Tidal's music library
-- 🎨 **Beautiful UI**: Pixel-perfect recreation of the official Tidal interface
-- 🎧 **Audiophile Quality**: Streams LOSSLESS FLAC (16-bit/44.1kHz) for bit-perfect playback
-- ⚡ **Native Performance**: Built with Tauri (Rust + React) for minimal resource usage
-- ⌨️ **Keyboard Shortcuts**: Space (play/pause), Arrows (volume/skip)
-- 💾 **Persistent Sessions**: Saves your login and preferences
-- 🎼 **Queue Management**: Auto-play next track
+- Stream music from your Tidal library in up to lossless quality
+- Browse, search, and manage your playlists, albums, and artists
+- Queue management with playback history
+- Volume normalization (ReplayGain) with album/track mode
+- Exclusive output mode (ALSA) for dedicated audio devices
+- Bit-perfect playback for audiophile setups
+- MPRIS integration (media keys, DE widgets, taskbar controls)
+- System tray with playback controls
+- Keyboard shortcuts
+- Encrypted local storage for credentials and cache
+- Persistent sessions across restarts
 
-## Setup
+## Prerequisites
 
-### Prerequisites
-
-1. **Rust**: Install via rustup
-
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-   source "$HOME/.cargo/env"
-   ```
-
-2. **System Dependencies** (Ubuntu/Debian):
-
-   ```bash
-   sudo apt update
-   sudo apt install -y libwebkit2gtk-4.1-dev \
-       build-essential \
-       curl \
-       wget \
-       file \
-       libssl-dev \
-       libgtk-3-dev \
-       libayatana-appindicator3-dev \
-       librsvg2-dev
-   ```
-
-3. **Node.js**: Version 16+ required
-
-### Installation
+**Rust:**
 
 ```bash
-cd ~/dev/sone
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+**Node.js** 18+ (via nvm, fnm, or your preferred method)
+
+**System dependencies** (Ubuntu/Debian):
+
+```bash
+sudo apt install -y \
+    build-essential curl wget file patchelf \
+    libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav \
+    libsecret-1-dev
+```
+
+Optional (for exclusive ALSA output):
+
+```bash
+sudo apt install -y gstreamer1.0-alsa
+```
+
+For other distros, install the equivalent packages (e.g. `gst-plugins-*` on Arch, `gstreamer1-plugins-*` on Fedora).
+
+## Build & Run
+
+```bash
+git clone https://github.com/lullabyX/sone.git
+cd sone
 npm install
 npm run tauri dev
 ```
 
-## First Run
+## Usage
 
-1. Click **"Login with Tidal"**
+1. Launch the app and click **Login with Tidal**
 2. Enter the displayed code at [link.tidal.com](https://link.tidal.com)
-3. Your playlists will load automatically
-4. Click any album or track to start playing
+3. Your library loads automatically — browse and play
 
-## Audio Setup
+## Tech Stack
 
-For best quality on Linux:
-
-1. Select **"Pro Audio"** profile in your sound settings
-2. Set Linux volume to **100%**
-3. Control volume with your DAC/amp knob
-
-## Keyboard Shortcuts
-
-- `Space`: Play / Pause
-- `→`: Next track
-- `↑` / `↓`: Volume up / down
-
-## Technical Details
-
-- **Backend**: Rust with `rodio` for audio playback
-- **Frontend**: React + Tailwind CSS
-- **API**: Unofficial Tidal API integration
-- **Audio Format**: Streams unencrypted FLAC (LOSSLESS quality)
-- **Config**: Stored in `~/.config/sone/`
-
-## Known Limitations
-
-- Hi-Res/Master quality (24-bit/96kHz+) requires Widevine DRM (not yet implemented)
-- Currently supports LOSSLESS (CD Quality) which is unencrypted
-- No offline downloads
-
-## License
-
-MIT
+- **Backend:** Rust (Tauri 2)
+- **Frontend:** React 19, Tailwind 4, Jotai
+- **Audio:** GStreamer
+- **Config:** `~/.config/sone/`
 
 ## Disclaimer
 
-This is an unofficial third-party client. Not affiliated with Tidal.
+SONE is an independent, community-driven project. It is **not affiliated with, endorsed by, or connected to Tidal** in any way. All content is streamed directly from Tidal's service and requires a valid paid subscription. SONE does not download, redistribute, or circumvent protection of any content.
+
+All trademarks belong to their respective owners.
+
+## License
+
+[GPL-3.0-only](LICENSE)
