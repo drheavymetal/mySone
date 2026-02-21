@@ -4,7 +4,7 @@ import { useNavigation } from "../hooks/useNavigation";
 import { useMediaPlay } from "../hooks/useMediaPlay";
 import { useFavorites } from "../hooks/useFavorites";
 import { useAtomValue } from "jotai";
-import { userPlaylistsAtom, favoritePlaylistsAtom } from "../atoms/playlists";
+import { userPlaylistsAtom, favoritePlaylistsAtom, deletedPlaylistIdsAtom } from "../atoms/playlists";
 import {
   getUserPlaylists,
   getFavoriteAlbums,
@@ -64,6 +64,7 @@ export default function LibraryViewAll({ libraryType }: LibraryViewAllProps) {
 
   const userPlaylists = useAtomValue(userPlaylistsAtom);
   const favoritePlaylists = useAtomValue(favoritePlaylistsAtom);
+  const deletedPlaylistIds = useAtomValue(deletedPlaylistIdsAtom);
 
   const [items, setItems] = useState<any[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -213,22 +214,22 @@ export default function LibraryViewAll({ libraryType }: LibraryViewAllProps) {
     return () => observer.disconnect();
   }, [loadMore]);
 
-  // For playlists, merge: atom (optimistic) → paginated → favorites, deduped
+  // For playlists, merge: atom (optimistic) → paginated → favorites, deduped, skip deleted
   const displayItems = useMemo(() => {
     if (libraryType !== "playlists") return items;
     const seen = new Set<string>();
     const merged: any[] = [];
-    for (const p of userPlaylists) {
-      if (!seen.has(p.uuid)) { seen.add(p.uuid); merged.push(p); }
-    }
-    for (const p of items) {
-      if (!seen.has(p.uuid)) { seen.add(p.uuid); merged.push(p); }
-    }
-    for (const p of favoritePlaylists) {
-      if (!seen.has(p.uuid)) { seen.add(p.uuid); merged.push(p); }
-    }
+    const addIfValid = (p: any) => {
+      if (!seen.has(p.uuid) && !deletedPlaylistIds.has(p.uuid)) {
+        seen.add(p.uuid);
+        merged.push(p);
+      }
+    };
+    for (const p of userPlaylists) addIfValid(p);
+    for (const p of items) addIfValid(p);
+    for (const p of favoritePlaylists) addIfValid(p);
     return merged;
-  }, [userPlaylists, items, favoritePlaylists, libraryType]);
+  }, [userPlaylists, items, favoritePlaylists, deletedPlaylistIds, libraryType]);
 
   // ==================== Search / Filter ====================
 
