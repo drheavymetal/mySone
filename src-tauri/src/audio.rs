@@ -559,6 +559,9 @@ impl AudioPlayer {
                                             std::thread::sleep(std::time::Duration::from_millis(10));
                                         }
                                         log::debug!("[audio] teardown normal: EOS drain {:?}", start.elapsed());
+                                        if let Some(bus) = pipeline.bus() {
+                                            bus.set_flushing(true);
+                                        }
                                         pipeline.set_state(gst::State::Null).ok();
                                         let _ = pipeline.state(gst::ClockTime::from_mseconds(500));
                                     }
@@ -571,6 +574,9 @@ impl AudioPlayer {
                                         writer_gen.store(track_generation, Ordering::Release);
                                         if let Some(ref tx) = writer_tx {
                                             tx.send(WriterCommand::Flush).ok();
+                                        }
+                                        if let Some(bus) = pipeline.bus() {
+                                            bus.set_flushing(true);
                                         }
                                         pipeline.set_state(gst::State::Null).ok();
                                         drop(pipeline);
@@ -678,6 +684,10 @@ impl AudioPlayer {
                                                             })
                                                         ).ok();
                                                         eos_flag.store(true, Ordering::SeqCst);
+                                                        writer_tx_bus.send(WriterCommand::EndOfTrack {
+                                                            emit_finished: true,
+                                                            generation: bus_gen.load(Ordering::Acquire),
+                                                        }).ok();
                                                         break;
                                                     }
                                                     _ => {}
@@ -780,6 +790,9 @@ impl AudioPlayer {
                                                         serde_json::json!({ "kind": kind, "message": err_msg })
                                                     ).ok();
                                                     eos_flag.store(true, Ordering::SeqCst);
+                                                    if !tearing_down_flag.load(Ordering::SeqCst) {
+                                                        app_handle_clone.emit("track-finished", ()).ok();
+                                                    }
                                                     break;
                                                 }
                                                 _ => {}
@@ -838,15 +851,9 @@ impl AudioPlayer {
 
                     AudioCommand::Stop { reply } => {
                         let result = match backend.take() {
-                            Some(PlaybackBackend::Normal { pipeline, user_volume_el, .. }) => {
-                                if pipeline_exclusive {
-                                    if let Some(ref vol) = user_volume_el {
-                                        for i in (0..10).rev() {
-                                            vol.set_property("volume", current_volume * (i as f64 / 10.0));
-                                            std::thread::sleep(std::time::Duration::from_millis(10));
-                                        }
-                                        std::thread::sleep(std::time::Duration::from_millis(150));
-                                    }
+                            Some(PlaybackBackend::Normal { pipeline, .. }) => {
+                                if let Some(bus) = pipeline.bus() {
+                                    bus.set_flushing(true);
                                 }
                                 pipeline.set_state(gst::State::Null)
                                     .map(|_| {
@@ -858,6 +865,9 @@ impl AudioPlayer {
                             Some(PlaybackBackend::DirectAlsa { pipeline, .. }) => {
                                 // Unblock writer if paused, then shut down
                                 paused.store(false, Ordering::Release);
+                                if let Some(bus) = pipeline.bus() {
+                                    bus.set_flushing(true);
+                                }
                                 if let Some(tx) = writer_tx.take() {
                                     tx.send(WriterCommand::Shutdown).ok();
                                 }
