@@ -972,15 +972,15 @@ type BioSegment =
   | { type: "text"; text: string }
   | { type: "link"; artistId: number; text: string };
 
-function parseBio(raw: string): BioSegment[] {
+function parseSegments(text: string): BioSegment[] {
   const segments: BioSegment[] = [];
   const re = /\[wimpLink\s+artistId="(\d+)"\](.*?)\[\/wimpLink\]/g;
   let last = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = re.exec(raw)) !== null) {
+  while ((match = re.exec(text)) !== null) {
     if (match.index > last) {
-      segments.push({ type: "text", text: raw.slice(last, match.index) });
+      segments.push({ type: "text", text: text.slice(last, match.index) });
     }
     segments.push({
       type: "link",
@@ -990,8 +990,8 @@ function parseBio(raw: string): BioSegment[] {
     last = re.lastIndex;
   }
 
-  if (last < raw.length) {
-    segments.push({ type: "text", text: raw.slice(last) });
+  if (last < text.length) {
+    segments.push({ type: "text", text: text.slice(last) });
   }
 
   // Strip remaining [bracket] tags and <html> tags from text segments
@@ -1000,6 +1000,14 @@ function parseBio(raw: string): BioSegment[] {
       ? { ...seg, text: seg.text.replace(/\[[^\]]*\]/g, "").replace(/<[^>]*>/g, "") }
       : seg
   );
+}
+
+function parseBio(raw: string): BioSegment[][] {
+  const normalized = raw.replace(/<br\s*\/?>/gi, "\n");
+  return normalized
+    .split(/\n\n|\n/)
+    .filter((p) => p.trim())
+    .map((paragraph) => parseSegments(paragraph.trim()));
 }
 
 const CreditsTab = memo(function CreditsTab() {
@@ -1063,7 +1071,23 @@ const CreditsTab = memo(function CreditsTab() {
     };
   }, [currentTrack?.artist?.id]);
 
+  const handleArtistLink = useCallback(
+    (artistId: number, name: string) => {
+      setDrawerOpen(false);
+      navigateToArtist(artistId, { name });
+    },
+    [navigateToArtist, setDrawerOpen]
+  );
+
   const hasNoCredits = !creditsLoading && (creditsError || credits.length === 0);
+  const releaseDate = currentTrack?.album?.releaseDate
+    ? (() => {
+        const d = new Date(currentTrack.album!.releaseDate!);
+        return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+      })()
+    : null;
+  const bioParagraphs = bio ? parseBio(bio) : null;
+  const hasBioContent = bioParagraphs && bioParagraphs.length > 0;
 
   if (hasNoCredits && !bioLoading && !bio) {
     return (
@@ -1073,24 +1097,6 @@ const CreditsTab = memo(function CreditsTab() {
       </div>
     );
   }
-
-  const releaseDate = currentTrack?.album?.releaseDate
-    ? (() => {
-        const d = new Date(currentTrack.album!.releaseDate!);
-        return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-      })()
-    : null;
-
-  const bioSegments = bio ? parseBio(bio) : null;
-  const hasBioContent = bioSegments?.some((s) => s.text.trim());
-
-  const handleArtistLink = useCallback(
-    (artistId: number, name: string) => {
-      setDrawerOpen(false);
-      navigateToArtist(artistId, { name });
-    },
-    [navigateToArtist, setDrawerOpen]
-  );
 
   return (
     <div className="flex flex-col">
@@ -1139,24 +1145,29 @@ const CreditsTab = memo(function CreditsTab() {
           <SkeletonBar className="h-4 w-3/4" />
         </div>
       )}
-      {!bioLoading && bioSegments && hasBioContent && (
-        <div className="flex flex-col gap-2.5 pt-6 mt-2">
-          <h3 className="text-[16px] font-bold text-white">Bio</h3>
-          <p className="text-[14px] text-white/80 leading-relaxed">
-            {bioSegments.map((seg, i) =>
-              seg.type === "link" ? (
-                <button
-                  key={i}
-                  className="underline decoration-white/40 underline-offset-2 hover:decoration-white/80 transition-colors"
-                  onClick={() => handleArtistLink(seg.artistId, seg.text)}
-                >
-                  {seg.text}
-                </button>
-              ) : (
-                <span key={i}>{seg.text}</span>
-              )
-            )}
-          </p>
+      {!bioLoading && bioParagraphs && hasBioContent && (
+        <div className="flex flex-col pt-6 mt-2">
+          <h3 className="text-[16px] font-bold text-white mb-3">Bio</h3>
+          {bioParagraphs.map((segments, pi) => (
+            <p
+              key={pi}
+              className="text-[14px] text-white/80 leading-[1.7] mb-4 last:mb-0"
+            >
+              {segments.map((seg, si) =>
+                seg.type === "link" ? (
+                  <button
+                    key={si}
+                    className="underline decoration-white/40 underline-offset-2 hover:decoration-white/80 transition-colors"
+                    onClick={() => handleArtistLink(seg.artistId, seg.text)}
+                  >
+                    {seg.text}
+                  </button>
+                ) : (
+                  <span key={si}>{seg.text}</span>
+                )
+              )}
+            </p>
+          ))}
         </div>
       )}
     </div>

@@ -324,7 +324,7 @@ pub struct TidalContributor {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TidalCredit {
-    #[serde(rename = "type")]
+    #[serde(rename(deserialize = "type", serialize = "creditType"))]
     pub credit_type: String,
     #[serde(default)]
     pub contributors: Vec<TidalContributor>,
