@@ -7,17 +7,30 @@ import {
   Shuffle,
   MoreHorizontal,
 } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAtomValue } from "jotai";
 import { isPlayingAtom, currentTrackAtom } from "../atoms/playback";
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useFavorites } from "../hooks/useFavorites";
-import { getAlbumDetail, getAlbumTracks } from "../api/tidal";
-import { getTidalImageUrl, type Track, type AlbumDetail } from "../types";
+import { useNavigation } from "../hooks/useNavigation";
+import { getAlbumPage } from "../api/tidal";
+import {
+  getTidalImageUrl,
+  type Track,
+  type AlbumPageResponse,
+  type MediaItemType,
+} from "../types";
 import TidalImage from "./TidalImage";
 import TrackList from "./TrackList";
 import MediaContextMenu from "./MediaContextMenu";
 import { DetailPageSkeleton } from "./PageSkeleton";
+import CardScrollSection from "./CardScrollSection";
+import {
+  getItemTitle,
+  getItemSubtitle,
+  getItemImage,
+  isMixItem,
+} from "../utils/itemHelpers";
 
 interface AlbumViewProps {
   albumId: number;
@@ -28,13 +41,30 @@ interface AlbumViewProps {
 function formatTotalDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
   if (hours > 0) {
-    return `${hours} hr ${mins} min`;
+    return `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(
+      2,
+      "0"
+    )}`;
   }
-  return `${mins} min`;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-const PAGE_SIZE = 50;
+function formatReleaseDateLong(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return d
+      .toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+      .toUpperCase();
+  } catch {
+    return dateStr.toUpperCase();
+  }
+}
 
 export default function AlbumView({
   albumId,
@@ -45,52 +75,52 @@ export default function AlbumView({
   const currentTrack = useAtomValue(currentTrackAtom);
   const { playTrack, setQueueTracks, pauseTrack, resumeTrack } =
     usePlaybackActions();
-  const { favoriteAlbumIds, addFavoriteAlbum, removeFavoriteAlbum } =
-    useFavorites();
+  const {
+    favoriteAlbumIds,
+    addFavoriteAlbum,
+    removeFavoriteAlbum,
+    favoritePlaylistUuids,
+    addFavoritePlaylist,
+    removeFavoritePlaylist,
+    followedArtistIds,
+    followArtist,
+    unfollowArtist,
+    favoriteMixIds,
+    addFavoriteMix,
+    removeFavoriteMix,
+  } = useFavorites();
+  const {
+    navigateToAlbum,
+    navigateToArtist,
+    navigateToPlaylist,
+    navigateToMix,
+    navigateToViewAll,
+  } = useNavigation();
 
-  const [album, setAlbum] = useState<AlbumDetail | null>(null);
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [totalTracks, setTotalTracks] = useState(0);
+  const [pageData, setPageData] = useState<AlbumPageResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [favoritePending, setFavoritePending] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const offsetRef = useRef(0);
-  const hasMoreRef = useRef(true);
-
   const albumFavorited = favoriteAlbumIds.has(albumId);
-  const hasMore = tracks.length < totalTracks;
 
-  // Load album detail + first page of tracks
   useEffect(() => {
     let cancelled = false;
 
     const loadAlbum = async () => {
       setLoading(true);
       setError(null);
-      setTracks([]);
-      offsetRef.current = 0;
-      hasMoreRef.current = true;
 
       try {
-        const [detail, firstPage] = await Promise.all([
-          getAlbumDetail(albumId),
-          getAlbumTracks(albumId, 0, PAGE_SIZE),
-        ]);
-
-        if (cancelled) return;
-
-        setAlbum(detail);
-        setTracks(firstPage.items);
-        setTotalTracks(firstPage.totalNumberOfItems);
-        offsetRef.current = firstPage.items.length;
-        hasMoreRef.current =
-          firstPage.items.length < firstPage.totalNumberOfItems;
+        const { page } = await getAlbumPage(albumId);
+        if (!cancelled) {
+          setPageData(page);
+        }
       } catch (err: any) {
         if (!cancelled) {
           console.error("Failed to load album:", err);
-          setError(err?.message || String(err));
+          const msg = err?.message;
+          setError(typeof msg === "string" ? msg : "Failed to load album");
         }
       } finally {
         if (!cancelled) {
@@ -105,27 +135,29 @@ export default function AlbumView({
     };
   }, [albumId]);
 
-  // Load more tracks (infinite scroll)
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMoreRef.current) return;
+  const album = pageData?.album ?? null;
+  const tracks = pageData?.tracks ?? [];
+  const sections = pageData?.sections ?? [];
+  const copyright = pageData?.copyright;
 
-    setLoadingMore(true);
-    try {
-      const page = await getAlbumTracks(albumId, offsetRef.current, PAGE_SIZE);
-      setTracks((prev) => [...prev, ...page.items]);
-      setTotalTracks(page.totalNumberOfItems);
-      offsetRef.current += page.items.length;
-      hasMoreRef.current = offsetRef.current < page.totalNumberOfItems;
-    } catch (err) {
-      console.error("Failed to load more tracks:", err);
-    } finally {
-      setLoadingMore(false);
+  // Group tracks by volume for multi-disc albums
+  const volumeGroups = useMemo(() => {
+    const groups = new Map<number, Track[]>();
+    for (const track of tracks) {
+      const vol = track.volumeNumber ?? 1;
+      let group = groups.get(vol);
+      if (!group) {
+        group = [];
+        groups.set(vol, group);
+      }
+      group.push(track);
     }
-  }, [albumId, loadingMore]);
+    return groups;
+  }, [tracks]);
+  const isMultiVolume = volumeGroups.size > 1;
 
   const handlePlayTrack = async (track: Track, index: number) => {
     try {
-      // Set remaining tracks as queue (album context = album gain)
       const remaining = tracks.slice(index + 1);
       setQueueTracks(remaining, { albumMode: true });
       await playTrack(track);
@@ -137,8 +169,7 @@ export default function AlbumView({
   const handlePlayAll = async () => {
     if (tracks.length === 0) return;
 
-    // If already playing a track from this album, toggle pause
-    if (currentTrack && isTrackFromThisAlbum(currentTrack)) {
+    if (currentTrack && currentTrack.album?.id === albumId) {
       if (isPlaying) {
         await pauseTrack();
       } else {
@@ -170,7 +201,10 @@ export default function AlbumView({
     }
   };
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   const handleToggleFavorite = async () => {
     if (favoritePending) return;
@@ -189,18 +223,105 @@ export default function AlbumView({
     }
   };
 
-  const isTrackFromThisAlbum = (track: Track) => {
-    return track.album?.id === albumId;
-  };
-
   const albumPlaying =
-    currentTrack && isTrackFromThisAlbum(currentTrack) && isPlaying;
+    currentTrack && currentTrack.album?.id === albumId && isPlaying;
 
-  // Use album detail or fallback to passed info
   const displayTitle = album?.title || albumInfo?.title || "Album";
   const displayCover = album?.cover || albumInfo?.cover;
   const displayArtist =
     album?.artist?.name || albumInfo?.artistName || "Unknown Artist";
+
+  const [sectionContextMenu, setSectionContextMenu] = useState<{
+    item: MediaItemType;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  const handleCardClick = useCallback(
+    (item: any, sectionType: string) => {
+      if (sectionType === "ALBUM_LIST") {
+        navigateToAlbum(item.id, {
+          title: item.title,
+          cover: item.cover,
+          artistName: item.artist?.name || item.artists?.[0]?.name,
+        });
+      } else if (sectionType === "ARTIST_LIST") {
+        navigateToArtist(item.id, {
+          name: item.name || getItemTitle(item),
+          picture: item.picture,
+        });
+      } else if (sectionType === "PLAYLIST_LIST") {
+        navigateToPlaylist(item.uuid, {
+          title: item.title,
+          image: item.squareImage || item.image,
+          description: item.description,
+          creatorName: item.creator?.name,
+          numberOfTracks: item.numberOfTracks,
+        });
+      } else if (isMixItem(item, sectionType)) {
+        const mixId = item.mixId || item.id?.toString();
+        if (mixId) {
+          navigateToMix(mixId, {
+            title: getItemTitle(item),
+            image: getItemImage(item),
+            subtitle: getItemSubtitle(item),
+          });
+        }
+      }
+    },
+    [navigateToAlbum, navigateToArtist, navigateToPlaylist, navigateToMix]
+  );
+
+  const handleCardContextMenu = useCallback(
+    (e: React.MouseEvent, item: any, sectionType: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      let mediaItem: MediaItemType | null = null;
+
+      if (sectionType === "ALBUM_LIST") {
+        mediaItem = {
+          type: "album",
+          id: item.id,
+          title: item.title || getItemTitle(item),
+          cover: item.cover,
+          artistName: item.artist?.name || item.artists?.[0]?.name,
+        };
+      } else if (sectionType === "ARTIST_LIST") {
+        mediaItem = {
+          type: "artist",
+          id: item.id,
+          name: item.name || getItemTitle(item),
+          picture: item.picture,
+        };
+      } else if (sectionType === "PLAYLIST_LIST") {
+        mediaItem = {
+          type: "playlist",
+          uuid: item.uuid,
+          title: item.title || getItemTitle(item),
+          image: item.squareImage || item.image,
+          creatorName: item.creator?.name,
+        };
+      } else if (isMixItem(item, sectionType)) {
+        const mixId = item.mixId || item.id?.toString();
+        if (mixId) {
+          mediaItem = {
+            type: "mix",
+            mixId,
+            title: getItemTitle(item),
+            image: getItemImage(item),
+            subtitle: getItemSubtitle(item),
+          };
+        }
+      }
+
+      if (mediaItem) {
+        setSectionContextMenu({
+          item: mediaItem,
+          position: { x: e.clientX, y: e.clientY },
+        });
+      }
+    },
+    []
+  );
 
   if (loading) {
     return <DetailPageSkeleton type="album" />;
@@ -226,6 +347,8 @@ export default function AlbumView({
     );
   }
 
+  const totalDuration = tracks.reduce((sum, t) => sum + (t.duration || 0), 0);
+
   return (
     <div className="flex-1 bg-linear-to-b from-th-surface to-th-base overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
       {/* Album Header */}
@@ -245,18 +368,28 @@ export default function AlbumView({
             {displayTitle}
           </h1>
           <div className="flex items-center gap-1.5 text-[14px] text-th-text-muted mt-2">
-            <span className="text-white font-semibold hover:underline cursor-pointer">
+            <span
+              className="text-white font-semibold hover:underline cursor-pointer"
+              onClick={() => {
+                if (album?.artist?.id) {
+                  navigateToArtist(album.artist.id, {
+                    name: album.artist.name,
+                    picture: album.artist.picture,
+                  });
+                }
+              }}
+            >
               {displayArtist}
             </span>
             {album?.releaseDate && (
               <>
-                <span className="mx-1">•</span>
+                <span className="mx-1">&bull;</span>
                 <span>{new Date(album.releaseDate).getFullYear()}</span>
               </>
             )}
             {album?.numberOfTracks != null && (
               <>
-                <span className="mx-1">•</span>
+                <span className="mx-1">&bull;</span>
                 <span>
                   {album.numberOfTracks} TRACK
                   {album.numberOfTracks !== 1 ? "S" : ""}
@@ -265,7 +398,7 @@ export default function AlbumView({
             )}
             {album?.duration != null && album.duration > 0 && (
               <>
-                <span className="mx-1">•</span>
+                <span className="mx-1">&bull;</span>
                 <span>{formatTotalDuration(album.duration)}</span>
               </>
             )}
@@ -275,7 +408,6 @@ export default function AlbumView({
 
       {/* Play Controls */}
       <div className="px-8 py-5 flex items-center justify-between">
-        {/* Left — Play & Shuffle buttons */}
         <div className="flex items-center gap-3">
           <button
             onClick={handlePlayAll}
@@ -296,7 +428,6 @@ export default function AlbumView({
             Shuffle
           </button>
         </div>
-        {/* Right — Heart & More icons */}
         <div className="flex items-center gap-2 relative">
           <button
             onClick={handleToggleFavorite}
@@ -306,7 +437,9 @@ export default function AlbumView({
                 ? "text-th-accent hover:brightness-110"
                 : "text-th-text-muted hover:text-white hover:bg-white/8"
             } disabled:opacity-60 disabled:cursor-not-allowed`}
-            title={albumFavorited ? "Remove from favorites" : "Add to favorites"}
+            title={
+              albumFavorited ? "Remove from favorites" : "Add to favorites"
+            }
             aria-label={albumFavorited ? "Unfavorite album" : "Favorite album"}
           >
             {favoritePending ? (
@@ -346,27 +479,109 @@ export default function AlbumView({
       </div>
 
       {/* Track List */}
-      <div className="px-8 pb-8">
-        <TrackList
-          tracks={tracks}
-          onPlay={handlePlayTrack}
-          onLoadMore={loadMore}
-          hasMore={hasMore}
-          loadingMore={loadingMore}
-          showDateAdded={false}
-          showArtist={true}
-          showAlbum={false}
-          showCover={false}
-          context="album"
-        />
-
-        {/* End of list */}
-        {!hasMore && tracks.length > 0 && (
-          <div className="py-6 text-center text-[13px] text-th-text-disabled">
-            {totalTracks} TRACK{totalTracks !== 1 ? "S" : ""}
-          </div>
+      <div className="px-8 pt-4 pb-2">
+        {isMultiVolume ? (
+          (() => {
+            let flatOffset = 0;
+            return [...volumeGroups.entries()].map(([vol, volTracks]) => {
+              const startOffset = flatOffset;
+              flatOffset += volTracks.length;
+              return (
+                <div key={vol}>
+                  <h3
+                    className={`text-md font-semibold text-white mb-2${
+                      vol > 1 ? " mt-6" : ""
+                    }`}
+                  >
+                    Volume {vol}
+                  </h3>
+                  <TrackList
+                    tracks={volTracks}
+                    onPlay={(track, localIndex) =>
+                      handlePlayTrack(track, startOffset + localIndex)
+                    }
+                    showDateAdded={false}
+                    showArtist={true}
+                    showAlbum={false}
+                    showCover={false}
+                    context="album"
+                  />
+                </div>
+              );
+            });
+          })()
+        ) : (
+          <TrackList
+            tracks={tracks}
+            onPlay={handlePlayTrack}
+            showDateAdded={false}
+            showArtist={true}
+            showAlbum={false}
+            showCover={false}
+            context="album"
+          />
         )}
       </div>
+
+      {/* Album Footer */}
+      {tracks.length > 0 && (
+        <div className="px-8 pt-4 pb-8">
+          <div className="text-[13px] text-th-text-disabled">
+            {album?.releaseDate && (
+              <span>{formatReleaseDateLong(album.releaseDate)}</span>
+            )}
+            {album?.releaseDate && <span className="mx-1.5">&bull;</span>}
+            <span>
+              {tracks.length} TRACK{tracks.length !== 1 ? "S" : ""}
+              {totalDuration > 0 && ` (${formatTotalDuration(totalDuration)})`}
+            </span>
+          </div>
+          {copyright && (
+            <div className="text-[12px] text-th-text-disabled mt-1 uppercase">
+              {copyright}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Related Sections */}
+      {sections.map((section, idx) => {
+        if (!section.items || section.items.length === 0) return null;
+
+        return (
+          <CardScrollSection
+            key={idx}
+            section={section}
+            onCardClick={handleCardClick}
+            onContextMenu={handleCardContextMenu}
+            onViewAll={
+              section.apiPath
+                ? () => navigateToViewAll(section.title, section.apiPath!)
+                : undefined
+            }
+            favoriteAlbumIds={favoriteAlbumIds}
+            addFavoriteAlbum={addFavoriteAlbum}
+            removeFavoriteAlbum={removeFavoriteAlbum}
+            favoritePlaylistUuids={favoritePlaylistUuids}
+            addFavoritePlaylist={addFavoritePlaylist}
+            removeFavoritePlaylist={removeFavoritePlaylist}
+            followedArtistIds={followedArtistIds}
+            followArtist={followArtist}
+            unfollowArtist={unfollowArtist}
+            favoriteMixIds={favoriteMixIds}
+            addFavoriteMix={addFavoriteMix}
+            removeFavoriteMix={removeFavoriteMix}
+          />
+        );
+      })}
+
+      {sectionContextMenu && (
+        <MediaContextMenu
+          item={sectionContextMenu.item}
+          cursorPosition={sectionContextMenu.position}
+          onClose={() => setSectionContextMenu(null)}
+        />
+      )}
     </div>
   );
 }

@@ -161,6 +161,38 @@ impl TidalAlbumDetail {
     }
 }
 
+// ==================== Album Page types ====================
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumPageResponse {
+    pub album: TidalAlbumDetail,
+    pub tracks: Vec<TidalTrack>,
+    pub total_tracks: u32,
+    pub vibrant_color: Option<String>,
+    pub copyright: Option<String>,
+    pub credits: Vec<TidalCredit>,
+    pub review: Option<TidalReview>,
+    pub sections: Vec<AlbumPageSection>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TidalReview {
+    pub source: Option<String>,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumPageSection {
+    pub title: String,
+    #[serde(rename(deserialize = "type", serialize = "sectionType"))]
+    pub section_type: String,
+    pub items: Vec<Value>,
+    pub api_path: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PaginatedTracks {
@@ -3132,6 +3164,134 @@ impl TidalClient {
         ]).await?;
         serde_json::from_str(&body)
             .map_err(|e| SoneError::Parse(format!("artist view-all JSON: {}", e)))
+    }
+
+    pub fn parse_album_page(&self, body: &str) -> Result<AlbumPageResponse, SoneError> {
+        let json: Value = serde_json::from_str(body)
+            .map_err(|e| SoneError::Parse(format!("album page JSON: {}", e)))?;
+
+        let rows = json.get("rows").and_then(|r| r.as_array())
+            .ok_or_else(|| SoneError::Parse("album page: missing rows".into()))?;
+
+        let mut album: Option<TidalAlbumDetail> = None;
+        let mut tracks: Vec<TidalTrack> = Vec::new();
+        let mut total_tracks: u32 = 0;
+        let mut credits: Vec<TidalCredit> = Vec::new();
+        let mut review: Option<TidalReview> = None;
+        let mut sections: Vec<AlbumPageSection> = Vec::new();
+        let mut vibrant_color: Option<String> = None;
+        let mut copyright: Option<String> = None;
+
+        for row in rows {
+            let modules = match row.get("modules").and_then(|m| m.as_array()) {
+                Some(m) => m,
+                None => continue,
+            };
+
+            for module in modules {
+                let mtype = module.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                match mtype {
+                    "ALBUM_HEADER" => {
+                        if let Some(album_val) = module.get("album") {
+                            if let Ok(mut detail) = serde_json::from_value::<TidalAlbumDetail>(album_val.clone()) {
+                                detail.backfill_artist();
+                                copyright = detail.copyright.clone();
+                                album = Some(detail);
+                            }
+                        }
+                        // Credits
+                        if let Some(creds) = module.get("credits").and_then(|c| c.as_array()) {
+                            for c in creds {
+                                if let Ok(credit) = serde_json::from_value::<TidalCredit>(c.clone()) {
+                                    credits.push(credit);
+                                }
+                            }
+                        }
+                        // Review
+                        if let Some(rev) = module.get("review") {
+                            if let Ok(r) = serde_json::from_value::<TidalReview>(rev.clone()) {
+                                if r.text.is_some() {
+                                    review = Some(r);
+                                }
+                            }
+                        }
+                    }
+                    "ALBUM_ITEMS" => {
+                        if let Some(paged) = module.get("pagedList") {
+                            total_tracks = paged.get("totalNumberOfItems")
+                                .and_then(|n| n.as_u64())
+                                .unwrap_or(0) as u32;
+
+                            if let Some(items) = paged.get("items").and_then(|i| i.as_array()) {
+                                for item_wrapper in items {
+                                    // Items are wrapped as {item: {...}, type: "track"}
+                                    let track_val = item_wrapper.get("item").unwrap_or(item_wrapper);
+                                    if let Ok(mut track) = serde_json::from_value::<TidalTrack>(track_val.clone()) {
+                                        track.backfill_artist();
+                                        // Extract vibrant color from first track's album
+                                        if vibrant_color.is_none() {
+                                            if let Some(ref alb) = track.album {
+                                                vibrant_color = alb.vibrant_color.clone();
+                                            }
+                                        }
+                                        tracks.push(track);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "ALBUM_LIST" | "ARTIST_LIST" => {
+                        let title = module.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                        let mut items: Vec<Value> = Vec::new();
+
+                        if let Some(paged) = module.get("pagedList") {
+                            if let Some(arr) = paged.get("items").and_then(|i| i.as_array()) {
+                                items = arr.clone();
+                            }
+                        }
+
+                        let api_path = module.get("showMore")
+                            .and_then(|sm| sm.get("apiPath"))
+                            .and_then(|p| p.as_str())
+                            .map(|s| s.to_string());
+
+                        if !items.is_empty() {
+                            sections.push(AlbumPageSection {
+                                title,
+                                section_type: mtype.to_string(),
+                                items,
+                                api_path,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let album = album.ok_or_else(|| SoneError::Parse("album page: no ALBUM_HEADER found".into()))?;
+
+        Ok(AlbumPageResponse {
+            album,
+            tracks,
+            total_tracks,
+            vibrant_color,
+            copyright,
+            credits,
+            review,
+            sections,
+        })
+    }
+
+    pub async fn get_album_page(&mut self, album_id: u64) -> Result<AlbumPageResponse, SoneError> {
+        let cc = self.country_code.clone();
+        let id_str = album_id.to_string();
+        let body = self.api_get_body(
+            "/pages/album",
+            &[("albumId", &id_str), ("countryCode", &cc), ("deviceType", "BROWSER")],
+        ).await?;
+        self.parse_album_page(&body)
     }
 
     pub async fn get_page(&mut self, api_path: &str) -> Result<HomePageResponse, SoneError> {

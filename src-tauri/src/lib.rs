@@ -416,6 +416,7 @@ pub fn run() {
             commands::library::get_favorite_artists,
             // pages
             commands::pages::get_album_detail,
+            commands::pages::get_album_page,
             commands::pages::get_album_tracks,
             commands::pages::get_home_page,
             commands::pages::refresh_home_page,

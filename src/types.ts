@@ -405,3 +405,38 @@ export interface AllFavoriteIds {
   artists: number[];
   playlists: string[];
 }
+
+// ==================== Album Page Types ====================
+
+export interface AlbumPageCredit {
+  creditType: string;
+  contributors: { id?: number; name: string }[];
+}
+
+export interface AlbumPageReview {
+  source?: string;
+  text?: string;
+}
+
+export interface AlbumPageSection {
+  title: string;
+  sectionType: string;
+  items: any[];
+  apiPath?: string;
+}
+
+export interface AlbumPageResponse {
+  album: AlbumDetail;
+  tracks: Track[];
+  totalTracks: number;
+  vibrantColor?: string;
+  copyright?: string;
+  credits: AlbumPageCredit[];
+  review?: AlbumPageReview;
+  sections: AlbumPageSection[];
+}
+
+export interface AlbumPageCached {
+  page: AlbumPageResponse;
+  isStale: boolean;
+}

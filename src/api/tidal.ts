@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AlbumDetail,
+  AlbumPageCached,
   ArtistDetail,
   ArtistPageData,
   Credit,
@@ -304,6 +305,12 @@ export async function getAlbumDetail(albumId: number): Promise<AlbumDetail> {
   }, TTL.STATIC);
 }
 
+export async function getAlbumPage(albumId: number): Promise<AlbumPageCached> {
+  return cached(`album-page:${albumId}`, ["album"], () =>
+    invoke<AlbumPageCached>("get_album_page", { albumId }),
+  TTL.STATIC);
+}
+
 export async function getAlbumTracks(
   albumId: number,
   offset: number = 0,
@@ -549,8 +556,8 @@ export async function fetchMediaTracks(
 ): Promise<Track[]> {
   switch (item.type) {
     case "album": {
-      const result = await getAlbumTracks(item.id, 0, 200);
-      return result.items;
+      const { page } = await getAlbumPage(item.id);
+      return page.tracks;
     }
     case "playlist": {
       return await getPlaylistTracks(item.uuid);

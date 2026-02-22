@@ -5,7 +5,7 @@ use tauri::{Manager, State};
 use crate::AppState;
 use crate::SoneError;
 use crate::cache::{CacheResult, CacheTier};
-use crate::tidal_api::{HomePageResponse, PaginatedTracks, TidalAlbumDetail, TidalArtistDetail, TidalTrack};
+use crate::tidal_api::{AlbumPageResponse, HomePageResponse, PaginatedTracks, TidalAlbumDetail, TidalArtistDetail, TidalTrack};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +45,74 @@ pub async fn get_album_detail(state: State<'_, AppState>, album_id: u64) -> Resu
             .ok();
     }
     Ok(detail)
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumPageCached {
+    page: AlbumPageResponse,
+    is_stale: bool,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_album_page(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    album_id: u64,
+) -> Result<AlbumPageCached, SoneError> {
+    log::debug!("[get_album_page]: album_id={}", album_id);
+
+    let cache_key = format!("album-page:{}", album_id);
+    match state.disk_cache.get(&cache_key, CacheTier::Dynamic).await {
+        CacheResult::Fresh(bytes) => {
+            if let Ok(page) = serde_json::from_slice(&bytes) {
+                return Ok(AlbumPageCached { page, is_stale: false });
+            }
+        }
+        CacheResult::Stale(bytes) => {
+            if let Ok(page) = serde_json::from_slice::<AlbumPageResponse>(&bytes) {
+                if state.disk_cache.mark_in_flight(&cache_key).await {
+                    if state.disk_cache.should_retry_refresh(&cache_key, 300).await {
+                        state.disk_cache.mark_refresh_attempt(&cache_key).await;
+                        let handle = app_handle.clone();
+                        let key = cache_key.clone();
+                        tokio::spawn(async move {
+                            let st = handle.state::<AppState>();
+                            let result = {
+                                let mut client = st.tidal_client.lock().await;
+                                client.get_album_page(album_id).await
+                            };
+                            if let Ok(fresh) = result {
+                                if let Ok(json) = serde_json::to_vec(&fresh) {
+                                    st.disk_cache
+                                        .put(&key, &json, CacheTier::Dynamic, &["album", &format!("album:{}", album_id)])
+                                        .await
+                                        .ok();
+                                }
+                            }
+                            st.disk_cache.clear_in_flight(&key).await;
+                        });
+                    } else {
+                        state.disk_cache.clear_in_flight(&cache_key).await;
+                    }
+                }
+                return Ok(AlbumPageCached { page, is_stale: true });
+            }
+        }
+        CacheResult::Miss => {}
+    }
+
+    let mut client = state.tidal_client.lock().await;
+    let page = client.get_album_page(album_id).await?;
+    drop(client);
+
+    if let Ok(json) = serde_json::to_vec(&page) {
+        state.disk_cache
+            .put(&cache_key, &json, CacheTier::Dynamic, &["album", &format!("album:{}", album_id)])
+            .await
+            .ok();
+    }
+    Ok(AlbumPageCached { page, is_stale: false })
 }
 
 #[tauri::command(rename_all = "camelCase")]
