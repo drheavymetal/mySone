@@ -891,7 +891,7 @@ impl AudioPlayer {
                                     bus.set_flushing(true);
                                 }
                                 if let Some(tx) = writer_tx.take() {
-                                    tx.try_send(WriterCommand::Shutdown).ok();
+                                    let _ = tx.send(WriterCommand::Shutdown);
                                 }
                                 pipeline.set_state(gst::State::Null).ok();
                                 if let Some(h) = writer_thread.take() {
