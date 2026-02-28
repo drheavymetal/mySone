@@ -11,9 +11,6 @@
 > [!IMPORTANT]
 > Requires an active [TIDAL](https://tidal.com) subscription. Not affiliated with TIDAL.
 
-<div align="center">
-  <video src="data/sone_demo_readme.mp4" width="100%" controls autoplay loop muted playsinline></video>
-</div>
 
 <p align="center">
   <img src="data/sone_homepage_readme.png" width="32%" alt="SONE Linux TIDAL client — home page with lossless streaming library" />
@@ -28,6 +25,7 @@
 - [Why SONE?](#why-sone)
 - [Installation](#installation)
 - [Usage](#usage)
+- [FAQ](#faq)
 - [Tech Stack](#tech-stack)
 - [Contributing](#contributing)
 - [Disclaimer](#disclaimer)
@@ -68,7 +66,22 @@ SONE is a lightweight, native alternative to the official TIDAL web player and E
 
 ### Download
 
-Pre-built packages for Ubuntu/Debian (.deb), Fedora (.rpm), and a portable AppImage will be available on the [GitHub Releases](https://github.com/lullabyX/sone/releases) page.
+Pre-built packages for Ubuntu/Debian (.deb), Fedora (.rpm), openSUSE (.rpm), and Arch Linux (PKGBUILD) are available on the [GitHub Releases](https://github.com/lullabyX/sone/releases) page.
+
+<p align="center">
+  <a href="https://github.com/lullabyX/sone/releases/latest">
+    <img src="https://img.shields.io/badge/Debian%20/%20Ubuntu-.deb-A81D33?style=for-the-badge&logo=debian" height="30" alt="Download SONE .deb package for Debian and Ubuntu" />
+  </a>
+  <a href="https://github.com/lullabyX/sone/releases/latest">
+    <img src="https://img.shields.io/badge/Fedora-.rpm-51A2DA?style=for-the-badge&logo=fedora" height="30" alt="Download SONE .rpm package for Fedora Linux" />
+  </a>
+  <a href="https://github.com/lullabyX/sone/releases/latest">
+    <img src="https://img.shields.io/badge/openSUSE-.rpm-73BA25?style=for-the-badge&logo=opensuse" height="30" alt="Download SONE .rpm package for openSUSE Linux" />
+  </a>
+  <a href="https://github.com/lullabyX/sone/releases/latest">
+    <img src="https://img.shields.io/badge/Arch%20Linux-PKGBUILD-1793D1?style=for-the-badge&logo=archlinux" height="30" alt="Download SONE PKGBUILD for Arch Linux and Manjaro" />
+  </a>
+</p>
 
 ### Building from source
 
@@ -152,9 +165,31 @@ npm run tauri build        # Release build (produces .deb, .rpm, .AppImage)
 ## Usage
 
 1. Launch the app
-2. Enter your Client ID (and optionally Client Secret for Hi-Res — see details below)
+2. Enter your Client ID (and optionally Client Secret for Hi-Res — [see FAQ](#faq))
 3. Click **Get Login Code** and enter the displayed code at [link.tidal.com](https://link.tidal.com)
 4. Your library loads automatically — browse and play
+
+<details>
+<summary>Troubleshooting</summary>
+
+**No sound?**
+Make sure GStreamer plugins are installed — you need at minimum `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad`, and `gstreamer1.0-libav` (or your distro's equivalents).
+
+**Playback errors in exclusive/bit-perfect mode?**
+Your DAC must natively support the source sample rate. If the hardware doesn't support 192kHz, exclusive mode will fail for Hi-Res streams. Try a lower quality tier or switch to normal output mode.
+
+**"Error 71 (Protocol error) dispatching to Wayland display" on launch?**
+This is a known WebKitGTK/Wayland issue affecting Tauri apps on systems with NVIDIA GPUs ([tauri-apps/tauri#10702](https://github.com/tauri-apps/tauri/issues/10702)). As a workaround, launch SONE with the DMA-BUF renderer disabled:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 sone
+```
+
+If you're using X11 or don't have an NVIDIA GPU but still see this error, try updating your WebKitGTK and graphics drivers to the latest versions.
+
+</details>
+
+## FAQ
 
 <details>
 <summary>What are Client ID and Client Secret?</summary>
@@ -175,16 +210,24 @@ SONE does not provide or endorse any specific method for obtaining credentials. 
 </details>
 
 <details>
-<summary>Troubleshooting</summary>
+<summary>I'm getting a "Device busy" error in exclusive or bit-perfect mode</summary>
 
-**No sound?**
-Make sure GStreamer plugins are installed — you need at minimum `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad`, and `gstreamer1.0-libav` (or your distro's equivalents).
+Your system's sound server (PulseAudio or PipeWire) or another application is already using the ALSA device. Exclusive and bit-perfect modes need direct hardware access — only one application can hold the device at a time.
 
-**"Device busy" error in exclusive mode?**
-Another application has exclusive control of the ALSA device. Close it, or select a different output device in the settings menu.
+To fix this, either close the other application using the device, or select a different output device in SONE's settings.
 
-**Playback errors in exclusive/bit-perfect mode?**
-Your DAC must natively support the source sample rate. If the hardware doesn't support 192kHz, exclusive mode will fail for Hi-Res streams. Try a lower quality tier or switch to normal output mode.
+</details>
+
+<details>
+<summary>What is the difference between exclusive mode and bit-perfect mode?</summary>
+
+Both bypass your system's sound server (PulseAudio/PipeWire) and write directly to the ALSA hardware device. The difference is in how much processing happens before audio reaches your DAC.
+
+**Exclusive mode** locks the ALSA device so no other application can use it. Audio is converted to a fixed format (32-bit integer, stereo) while preserving the source's native sample rate — no resampling occurs. You still have software volume control and volume normalization (ReplayGain).
+
+**Bit-perfect mode** goes a step further. There is zero processing — no format conversion, no resampling, no volume control. The decoded audio reaches your DAC exactly as it was encoded. The volume slider is locked at 100% and disabled. This is the mode to use if you want the purest signal path to your DAC.
+
+In short: exclusive gives you direct hardware access with volume control. Bit-perfect gives you a completely unaltered signal.
 
 </details>
 
