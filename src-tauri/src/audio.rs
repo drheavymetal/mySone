@@ -1001,10 +1001,7 @@ impl AudioPlayer {
                                 track_generation += 1;
                                 writer_gen.store(track_generation, Ordering::Release);
                                 if let Some(ref tx) = writer_tx {
-                                    let _ = tx.send_timeout(
-                                        WriterCommand::Flush,
-                                        std::time::Duration::from_millis(200),
-                                    );
+                                    let _ = tx.send(WriterCommand::Flush);
                                 }
                                 let pos = gst::ClockTime::from_nseconds(
                                     (position_secs as f64 * 1_000_000_000.0) as u64,
