@@ -56,6 +56,7 @@
 
 SONE is a lightweight, native alternative to the official TIDAL web player and Electron-based unofficial clients.
 
+- **Full audio quality** — browsers and Electron apps downsample audio to 48kHz before it leaves the application. SONE is native — it outputs at the source's original sample rate, up to 192kHz (TIDAL's max). Exclusive ALSA mode bypasses the system mixer entirely for bit-perfect output to your DAC.
 - **Familiar interface** — a modern UI inspired by the streaming apps you already use
 - **Direct hardware access** — GStreamer talks directly to your audio hardware. Lock your DAC to the exact source format, bypassing the system mixer
 - **Lightweight** — built with Tauri and Rust. Small binary, low memory footprint
@@ -162,6 +163,20 @@ npm run tauri dev          # Development mode
 npm run tauri build        # Release build (produces .deb, .rpm, .AppImage)
 ```
 
+**Using build scripts:**
+
+Docker-based build scripts are provided in `build-scripts/build/` to produce distro-specific packages in isolated environments. Requires Docker.
+
+```bash
+./build-scripts/build/all.sh              # Build all packages in parallel (deb, rpm, pacman)
+./build-scripts/build/deb.sh              # Build .deb only (Ubuntu 22.04)
+./build-scripts/build/rpm.sh              # Build .rpm only (Fedora)
+./build-scripts/build/pacman.sh           # Build pacman package only (Arch)
+./build-scripts/build/all.sh --omit rpm   # Build all except rpm
+```
+
+Output goes to `dist/<format>/`. Pass `--no-cache` to force a clean Docker build.
+
 ## Usage
 
 1. Launch the app
@@ -253,3 +268,7 @@ All trademarks belong to their respective owners.
 ## License
 
 [GPL-3.0-only](LICENSE)
+
+---
+
+**TL;DR** — SONE is an open-source, native Linux desktop client for TIDAL built with Tauri 2 and Rust. It streams lossless FLAC and Hi-Res audio up to 24-bit/192kHz, with exclusive ALSA output that bypasses PulseAudio and PipeWire entirely for bit-perfect playback directly to your DAC. Lightweight, encrypted at rest, and fully offline — no telemetry, no tracking.
