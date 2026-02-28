@@ -762,6 +762,9 @@ impl AudioPlayer {
                                                         }).ok();
                                                         break;
                                                     }
+                                                    gst::MessageView::Buffering(b) => {
+                                                        log::debug!("[audio] direct-alsa: buffering {}%", b.percent());
+                                                    }
                                                     _ => {}
                                                 }
                                             }
@@ -785,8 +788,15 @@ impl AudioPlayer {
                                 }
 
                                 let pipe = gst::Pipeline::new();
-                                let uridecodebin = gst::ElementFactory::make("uridecodebin")
-                                    .property("uri", &uri)
+                                let is_dash = uri.starts_with("data:application/dash");
+                                let mut udb = gst::ElementFactory::make("uridecodebin")
+                                    .property("uri", &uri);
+                                if is_dash {
+                                    udb = udb
+                                        .property("buffer-duration", 15_000_000_000i64)
+                                        .property("use-buffering", true);
+                                }
+                                let uridecodebin = udb
                                     .build()
                                     .map_err(|e| format!("Failed to create uridecodebin: {e}"))?;
                                 let audioconvert = gst::ElementFactory::make("audioconvert")
@@ -864,6 +874,9 @@ impl AudioPlayer {
                                                         ).ok();
                                                     }
                                                     break;
+                                                }
+                                                gst::MessageView::Buffering(b) => {
+                                                    log::debug!("[audio] normal: buffering {}%", b.percent());
                                                 }
                                                 _ => {}
                                             }
@@ -1134,15 +1147,20 @@ fn build_appsink_pipeline(
     use gst_app::prelude::*;
 
     let pipe = gst::Pipeline::new();
-    let uridecodebin = gst::ElementFactory::make("uridecodebin")
-        .property("uri", uri)
+    let is_dash = uri.starts_with("data:application/dash");
+    let mut udb = gst::ElementFactory::make("uridecodebin")
+        .property("uri", uri);
+    if is_dash {
+        udb = udb
+            .property("buffer-duration", 15_000_000_000i64)
+            .property("use-buffering", true);
+    }
+    let uridecodebin = udb
         .build()
         .map_err(|e| format!("Failed to create uridecodebin: {e}"))?;
     let audioconvert = gst::ElementFactory::make("audioconvert")
         .build()
         .map_err(|e| format!("Failed to create audioconvert: {e}"))?;
-
-    let is_dash = uri.starts_with("data:application/dash");
 
     let appsink = gst_app::AppSink::builder()
         .max_buffers(20)
