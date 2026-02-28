@@ -11,7 +11,15 @@
 > [!IMPORTANT]
 > Requires an active [TIDAL](https://tidal.com) subscription. Not affiliated with TIDAL.
 
-<!-- TODO: Add a hero screenshot showcasing a custom theme (e.g. Cyberpunk or Midnight Cyan) with the now-playing drawer open -->
+<div align="center">
+  <video src="data/sone_demo_readme.mp4" width="100%" controls autoplay loop muted playsinline></video>
+</div>
+
+<p align="center">
+  <img src="data/sone_homepage_readme.png" width="32%" alt="SONE Linux TIDAL client — home page with lossless streaming library" />
+  <img src="data/sone_drawer_readme.png" width="32%" alt="SONE now playing drawer — Hi-Res FLAC playback with synced lyrics" />
+  <img src="data/sone_theme_readme.png" width="32%" alt="SONE custom theme — native Linux music player with full color customization" />
+</p>
 
 <details>
 <summary>Table of Contents</summary>
