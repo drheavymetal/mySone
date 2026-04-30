@@ -153,18 +153,16 @@ fn build_share_monitor(
         )
         .build()
         .map_err(|e| format!("share capsfilter: {e}"))?;
-    let opusenc = gst::ElementFactory::make("opusenc")
-        .property("bitrate", 256_000i32)
-        .property_from_str("bandwidth", "fullband")
-        .property("inband-fec", true)
-        .property("packet-loss-percentage", 5i32)
+    // MP3 instead of Opus/Ogg: universal browser support (especially mobile —
+    // iOS Safari doesn't decode OGG/Opus reliably). 192 kbps CBR sounds
+    // transparent for casual listening and the bitrate is predictable for
+    // the broadcast capacity calc.
+    let lamemp3enc = gst::ElementFactory::make("lamemp3enc")
+        .property_from_str("target", "bitrate")
+        .property("bitrate", 192i32)
+        .property("cbr", true)
         .build()
-        .map_err(|e| format!("share opusenc: {e}"))?;
-    // oggmux: standard browser-playable container for Opus.
-    let oggmux = gst::ElementFactory::make("oggmux")
-        .property("max-delay", 1_000_000_000u64)
-        .build()
-        .map_err(|e| format!("share oggmux: {e}"))?;
+        .map_err(|e| format!("share lamemp3enc: {e}"))?;
 
     // async=false: do NOT block pipeline preroll on this branch. With the
     // valve closed (default), opusenc receives no buffers, so the appsink
@@ -212,8 +210,7 @@ fn build_share_monitor(
             convert,
             resample,
             caps,
-            opusenc,
-            oggmux,
+            lamemp3enc,
             appsink.upcast::<gst::Element>(),
         ],
         handle,

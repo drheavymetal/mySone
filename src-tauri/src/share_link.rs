@@ -145,7 +145,7 @@ impl ShareLink {
 async fn serve(state: AppState) {
     let app = Router::new()
         .route("/r/:token", get(landing_page))
-        .route("/r/:token/stream.opus", get(audio_stream))
+        .route("/r/:token/stream.mp3", get(audio_stream))
         .route("/health", get(|| async { "ok" }))
         .with_state(state);
 
@@ -205,7 +205,7 @@ async fn audio_stream(
     };
 
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/ogg"));
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/mpeg"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     headers.insert(header::CONNECTION, HeaderValue::from_static("keep-alive"));
 
@@ -244,12 +244,13 @@ impl Stream for OpusStream {
 
 fn landing_html(token: &str) -> String {
     format!(
-        r#"<!doctype html>
+        r##"<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SONE Listening Room</title>
+<meta name="theme-color" content="#0c0c10">
+<title>SONE — En directo</title>
 <style>
   :root {{
     color-scheme: dark;
@@ -257,38 +258,143 @@ fn landing_html(token: &str) -> String {
     --fg: #e6e6ea;
     --muted: #8a8a92;
     --accent: #c8b5ff;
-    --card: #16161c;
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; background: var(--bg); color: var(--fg);
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }}
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+                -webkit-tap-highlight-color: transparent; }}
+  body {{ overflow: hidden; }}
+
   .wrap {{ display: flex; flex-direction: column; align-items: center; justify-content: center;
-          min-height: 100%; padding: 24px; gap: 28px; }}
-  .card {{ background: var(--card); border-radius: 18px; padding: 28px 24px; max-width: 420px; width: 100%;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.5); }}
-  .title {{ font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }}
-  .room {{ font-size: 22px; font-weight: 600; margin: 0 0 18px; }}
-  audio {{ width: 100%; margin-top: 4px; }}
-  .hint {{ font-size: 12px; color: var(--muted); margin-top: 14px; line-height: 1.55; }}
-  .pill {{ display: inline-block; padding: 2px 10px; border-radius: 999px; background: rgba(200,181,255,0.15);
-          color: var(--accent); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 14px; }}
-  .footer {{ font-size: 11px; color: var(--muted); }}
+          min-height: 100vh; padding: 24px; gap: 22px; }}
+  .pill {{ display: inline-flex; align-items: center; gap: 6px;
+          padding: 4px 12px; border-radius: 999px;
+          background: rgba(200,181,255,0.12); color: var(--accent);
+          font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }}
+  .pill .dot {{ width: 6px; height: 6px; border-radius: 999px; background: var(--accent);
+               animation: dot-pulse 1.6s ease-in-out infinite; }}
+  @keyframes dot-pulse {{
+    0%, 100% {{ opacity: 1; transform: scale(1); }}
+    50%      {{ opacity: 0.45; transform: scale(0.8); }}
+  }}
+
+  .title {{ font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase;
+           color: var(--muted); margin: 0; }}
+  .room  {{ font-size: 14px; color: var(--muted); margin: 0; font-family: ui-monospace, Menlo, monospace; }}
+
+  .play-btn {{
+    appearance: none; -webkit-appearance: none; border: 0;
+    width: 220px; height: 220px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 35%, rgba(200,181,255,0.55), rgba(200,181,255,0.18) 60%, rgba(200,181,255,0.02) 80%);
+    color: var(--fg); font-size: 17px; font-weight: 600; letter-spacing: 0.12em;
+    cursor: pointer; outline: none; user-select: none;
+    transition: transform 0.18s ease, filter 0.18s ease;
+    box-shadow: 0 10px 60px rgba(200,181,255,0.18), inset 0 0 80px rgba(200,181,255,0.08);
+  }}
+  .play-btn:active {{ transform: scale(0.97); filter: brightness(1.1); }}
+  .play-btn .icon {{ display: block; font-size: 56px; line-height: 1; margin-bottom: 6px; }}
+
+  .play-btn.playing {{
+    background: radial-gradient(circle at 50% 35%, rgba(200,181,255,0.32), rgba(200,181,255,0.08) 65%, transparent 85%);
+    animation: bg-breathe 4.5s ease-in-out infinite;
+  }}
+  @keyframes bg-breathe {{
+    0%, 100% {{ filter: brightness(1); }}
+    50%      {{ filter: brightness(1.18); }}
+  }}
+
+  .hint {{ font-size: 12px; color: var(--muted); text-align: center; max-width: 320px; line-height: 1.55; }}
+  .err  {{ color: #ff6e6e; font-size: 12px; text-align: center; max-width: 320px; }}
+  .footer {{ position: fixed; bottom: 14px; left: 0; right: 0; text-align: center;
+            font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.18); }}
+
+  audio {{ display: none; }}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="card">
-    <div class="pill">Listening room · live</div>
-    <p class="title">SONE</p>
-    <p class="room">{token}</p>
-    <audio controls autoplay preload="none" src="/r/{token}/stream.opus"></audio>
-    <p class="hint">El audio empieza en cuanto pulses ▶ (algunos navegadores bloquean autoplay).
-    Latencia ≈ 1–3&nbsp;s. Calidad: Opus 256&nbsp;kbps.</p>
-  </div>
-  <div class="footer">streaming desde mySone — solo audio</div>
+  <span class="pill"><span class="dot"></span> En directo</span>
+  <p class="title">SONE</p>
+  <p class="room">{token_short}</p>
+
+  <button id="play" class="play-btn" aria-label="Reproducir">
+    <span class="icon" id="icon">▶</span>
+    <span id="label">PLAY</span>
+  </button>
+
+  <p class="hint" id="hint">Toca PLAY una vez. Latencia ≈ 1-3 s.</p>
+
+  <audio id="audio" preload="none" playsinline></audio>
 </div>
+<div class="footer">stream · sone</div>
+
+<script>
+(function() {{
+  var audio = document.getElementById('audio');
+  var btn   = document.getElementById('play');
+  var icon  = document.getElementById('icon');
+  var label = document.getElementById('label');
+  var hint  = document.getElementById('hint');
+  var src   = '/r/{token}/stream.mp3';
+  var playing = false;
+
+  function setPlaying(on) {{
+    playing = on;
+    btn.classList.toggle('playing', on);
+    icon.textContent = on ? '❚❚' : '▶';
+    label.textContent = on ? 'EN DIRECTO' : 'PLAY';
+    hint.textContent = on
+      ? 'Reproduciendo lo que suena en SONE.'
+      : 'Toca PLAY una vez. Latencia ≈ 1-3 s.';
+  }}
+
+  function start() {{
+    // Reset src each time so the live stream re-attaches cleanly.
+    audio.src = src + '?t=' + Date.now();
+    var p = audio.play();
+    if (p && p.then) {{
+      p.then(function() {{ setPlaying(true); }})
+       .catch(function(e) {{
+         hint.className = 'err';
+         hint.textContent = 'No se pudo reproducir: ' + (e && e.message ? e.message : e);
+       }});
+    }} else {{
+      setPlaying(true);
+    }}
+  }}
+
+  function stop() {{
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    setPlaying(false);
+  }}
+
+  btn.addEventListener('click', function() {{
+    if (playing) stop(); else start();
+  }});
+
+  audio.addEventListener('playing', function() {{ setPlaying(true); }});
+  audio.addEventListener('pause',   function() {{ setPlaying(false); }});
+  audio.addEventListener('error',   function() {{
+    hint.className = 'err';
+    hint.textContent = 'Stream interrumpido. Toca para reintentar.';
+    setPlaying(false);
+  }});
+
+  // Best-effort silent autoplay attempt on load. If the browser blocks it
+  // (mobile usually does) the user just taps the big PLAY button.
+  window.addEventListener('load', function() {{
+    audio.src = src + '?t=' + Date.now();
+    var p = audio.play();
+    if (p && p.catch) p.catch(function() {{ /* expected on mobile */ }});
+  }});
+}})();
+</script>
 </body>
-</html>"#
+</html>"##,
+        token = token,
+        token_short = &token[..token.len().min(12)],
     )
 }
 
