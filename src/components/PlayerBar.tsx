@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   PictureInPicture2,
   Frame,
+  Orbit,
 } from "lucide-react";
 import { getTidalImageUrl, getTrackDisplayTitle } from "../types";
 import ExplicitBadge from "./ExplicitBadge";
@@ -41,6 +42,7 @@ import QualityBadge from "./QualityBadge";
 import SignalPathPanel from "./SignalPathPanel";
 import LyricsPanel from "./LyricsPanel";
 import LivePaintingMode from "./LivePaintingMode";
+import LibraryGalaxy from "./LibraryGalaxy";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -469,6 +471,7 @@ export default function PlayerBar() {
   const [signalPathOpen, setSignalPathOpen] = useState(false);
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [livePaintingOpen, setLivePaintingOpen] = useState(false);
+  const [galaxyOpen, setGalaxyOpen] = useState(false);
 
   return (
     <div className={`player-bar h-[90px] bg-th-elevated border-t border-th-border-subtle px-4 flex items-center justify-between relative z-50 select-none ${maximized ? "invisible" : ""}`}>
@@ -499,6 +502,13 @@ export default function PlayerBar() {
         >
           <Frame size={18} />
         </button>
+        <button
+          onClick={() => setGalaxyOpen(true)}
+          title="Galaxia 3D de tu librería"
+          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
+        >
+          <Orbit size={18} />
+        </button>
         <DrawerButtons />
         <MiniPlayerButton />
         <MaximizeButton />
@@ -507,6 +517,7 @@ export default function PlayerBar() {
       <SignalPathPanel open={signalPathOpen} onClose={() => setSignalPathOpen(false)} />
       <LyricsPanel open={lyricsOpen} onClose={() => setLyricsOpen(false)} />
       <LivePaintingMode open={livePaintingOpen} onClose={() => setLivePaintingOpen(false)} />
+      <LibraryGalaxy open={galaxyOpen} onClose={() => setGalaxyOpen(false)} />
     </div>
   );
 }
