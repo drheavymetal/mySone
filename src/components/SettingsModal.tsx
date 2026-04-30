@@ -11,6 +11,10 @@ import {
   Globe,
   RefreshCw,
   ShieldAlert,
+  Sparkles,
+  CheckCircle2,
+  XCircle,
+  Loader2,
 } from "lucide-react";
 import {
   autoplayAtom,
@@ -25,6 +29,163 @@ import {
   playbackSourceAtom,
   contextSourceAtom,
 } from "../atoms/playback";
+
+type LLMProvider = "off" | "deepseek" | "ollama";
+type LLMSettings = {
+  provider: LLMProvider;
+  deepseekApiKey: string;
+  deepseekModel: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+};
+
+const LLM_DEFAULT: LLMSettings = {
+  provider: "off",
+  deepseekApiKey: "",
+  deepseekModel: "deepseek-chat",
+  ollamaBaseUrl: "http://localhost:11434",
+  ollamaModel: "llama3.1:8b",
+};
+
+function AIBackendSection() {
+  const [settings, setSettings] = useState<LLMSettings>(LLM_DEFAULT);
+  const [loaded, setLoaded] = useState(false);
+  const [testStatus, setTestStatus] = useState<
+    "idle" | "testing" | "ok" | "fail"
+  >("idle");
+  const [testMessage, setTestMessage] = useState("");
+  const saveTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    invoke<LLMSettings>("get_llm_settings")
+      .then((s) => {
+        setSettings(s);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const update = (patch: Partial<LLMSettings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    setTestStatus("idle");
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      invoke("set_llm_settings", { settings: next }).catch(() => {});
+    }, 400);
+  };
+
+  const test = async () => {
+    setTestStatus("testing");
+    try {
+      await invoke("llm_ping");
+      setTestStatus("ok");
+      setTestMessage("Conexión OK");
+    } catch (e) {
+      setTestStatus("fail");
+      setTestMessage(typeof e === "string" ? e : ((e as { message?: string })?.message ?? "Error"));
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div>
+      <h3 className="text-[11px] uppercase tracking-wider text-th-text-muted mb-3">
+        AI backend
+      </h3>
+
+      <div className="flex items-center justify-between py-3 border-b border-th-border-subtle">
+        <div className="flex items-center gap-3 min-w-0">
+          <Sparkles size={16} className="text-th-text-muted shrink-0" />
+          <div>
+            <p className="text-[13px] text-th-text-secondary">Proveedor</p>
+            <p className="text-[11px] text-th-text-muted">
+              Para construir colas chateando con IA (botón ✨ en la PlayerBar)
+            </p>
+          </div>
+        </div>
+        <select
+          value={settings.provider}
+          onChange={(e) =>
+            update({ provider: e.target.value as LLMProvider })
+          }
+          className="px-2 py-1 text-[12px] bg-th-bg-secondary border border-th-border-subtle rounded text-th-text-primary"
+        >
+          <option value="off">Desactivado</option>
+          <option value="deepseek">DeepSeek (API)</option>
+          <option value="ollama">Ollama (local)</option>
+        </select>
+      </div>
+
+      {settings.provider === "deepseek" && (
+        <div className="py-3 space-y-2 border-b border-th-border-subtle">
+          <input
+            type="password"
+            value={settings.deepseekApiKey}
+            onChange={(e) => update({ deepseekApiKey: e.target.value })}
+            placeholder="DeepSeek API key"
+            className="w-full px-2 py-1.5 text-[12px] bg-th-bg-secondary border border-th-border-subtle rounded text-th-text-primary placeholder:text-th-text-muted"
+          />
+          <input
+            type="text"
+            value={settings.deepseekModel}
+            onChange={(e) => update({ deepseekModel: e.target.value })}
+            placeholder="modelo (deepseek-chat)"
+            className="w-full px-2 py-1.5 text-[12px] bg-th-bg-secondary border border-th-border-subtle rounded text-th-text-primary placeholder:text-th-text-muted"
+          />
+        </div>
+      )}
+
+      {settings.provider === "ollama" && (
+        <div className="py-3 space-y-2 border-b border-th-border-subtle">
+          <input
+            type="text"
+            value={settings.ollamaBaseUrl}
+            onChange={(e) => update({ ollamaBaseUrl: e.target.value })}
+            placeholder="Ollama URL (http://localhost:11434)"
+            className="w-full px-2 py-1.5 text-[12px] bg-th-bg-secondary border border-th-border-subtle rounded text-th-text-primary placeholder:text-th-text-muted"
+          />
+          <input
+            type="text"
+            value={settings.ollamaModel}
+            onChange={(e) => update({ ollamaModel: e.target.value })}
+            placeholder="modelo (llama3.1:8b)"
+            className="w-full px-2 py-1.5 text-[12px] bg-th-bg-secondary border border-th-border-subtle rounded text-th-text-primary placeholder:text-th-text-muted"
+          />
+        </div>
+      )}
+
+      {settings.provider !== "off" && (
+        <div className="flex items-center gap-2 py-2">
+          <button
+            onClick={test}
+            disabled={testStatus === "testing"}
+            className="px-3 py-1 text-[12px] border border-th-border-subtle rounded-md text-th-text-secondary hover:text-th-text-primary hover:border-th-accent/50 transition-colors disabled:opacity-50"
+          >
+            {testStatus === "testing" ? (
+              <span className="flex items-center gap-1">
+                <Loader2 size={12} className="animate-spin" /> Probando…
+              </span>
+            ) : (
+              "Probar conexión"
+            )}
+          </button>
+          {testStatus === "ok" && (
+            <span className="flex items-center gap-1 text-[11px] text-green-400">
+              <CheckCircle2 size={12} /> {testMessage}
+            </span>
+          )}
+          {testStatus === "fail" && (
+            <span className="flex items-center gap-1 text-[11px] text-red-400">
+              <XCircle size={12} /> {testMessage}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ExplicitContentToggle() {
   const [allowExplicit, setAllowExplicit] = useAtom(allowExplicitAtom);
@@ -462,6 +623,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                 </p>
               )}
             </div>
+
+            {/* ── AI Backend ── */}
+            <AIBackendSection />
 
             {/* ── Utilities ── */}
             <div>
