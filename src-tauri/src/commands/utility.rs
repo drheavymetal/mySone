@@ -13,6 +13,30 @@ pub fn get_signal_path(state: State<'_, AppState>) -> SignalPath {
     state.signal_path.snapshot()
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HwVolumeStatus {
+    pub available: bool,
+    pub level: Option<f32>,
+    pub control_name: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_hw_volume_status(state: State<'_, AppState>) -> HwVolumeStatus {
+    match state.current_hw_volume() {
+        Some(hw) => HwVolumeStatus {
+            available: true,
+            level: hw.get(),
+            control_name: Some(hw.selem_name().to_string()),
+        },
+        None => HwVolumeStatus {
+            available: false,
+            level: None,
+            control_name: None,
+        },
+    }
+}
+
 #[tauri::command]
 pub async fn update_tray_tooltip(app: tauri::AppHandle, text: String) -> Result<String, SoneError> {
     #[cfg(target_os = "linux")]
@@ -155,8 +179,19 @@ pub fn set_exclusive_mode(state: State<'_, AppState>, enabled: bool) -> Result<(
     let device = state.exclusive_device.lock().unwrap().clone();
     state
         .audio_player
-        .set_exclusive_mode(enabled, device)
+        .set_exclusive_mode(enabled, device.clone())
         .map_err(SoneError::Audio)?;
+
+    // HW volume lifecycle: open the DAC's mixer when entering exclusive,
+    // close when leaving. Bit-perfect-safe: this only ever talks to the
+    // ALSA control endpoint, never to PCM.
+    if enabled {
+        if let Some(ref dev) = device {
+            state.open_hw_volume(dev);
+        }
+    } else {
+        state.close_hw_volume();
+    }
 
     let mut settings = state.load_settings().unwrap_or_default();
     settings.exclusive_mode = enabled;
@@ -213,6 +248,12 @@ pub fn set_exclusive_device(state: State<'_, AppState>, device: String) -> Resul
         .audio_player
         .set_exclusive_mode(enabled, Some(device.clone()))
         .map_err(SoneError::Audio)?;
+
+    // Reopen HW volume against the new device.
+    if enabled {
+        state.open_hw_volume(&device);
+    }
+
     let mut settings = state.load_settings().unwrap_or_default();
     settings.exclusive_device = Some(device);
     state.save_settings(&settings)?;

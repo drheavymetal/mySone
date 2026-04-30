@@ -34,6 +34,7 @@ const CLI_VERBS: &[&str] = &[
     "previous",
     "stop",
     "status",
+    "vol",
     "help",
     "--help",
     "-h",
@@ -65,6 +66,7 @@ pub fn run(args: &[String]) -> i32 {
             let json = args.iter().any(|a| a == "--json");
             run_status(json)
         }
+        "vol" => run_vol(&args[2..]),
         _ => {
             eprintln!("sone: unknown command '{verb}'");
             print_help();
@@ -90,6 +92,15 @@ COMMANDS:
     stop              Stop playback
     status            Print current track and playback state
                       --json   emit machine-readable JSON
+    vol <ARG>         Adjust DAC hardware volume (bit-perfect safe)
+                      +N    raise by N percent
+                      -N    lower by N percent
+                      N     set to N percent (0..100)
+                      mute  set to 0
+                      get   print current level
+                      Routed through MPRIS when SONE is running, else
+                      directly via the ALSA mixer of the configured
+                      exclusive device. Never touches the PCM stream.
     help              Show this message (alias: --help, -h)
 
 With no arguments, SONE launches the desktop application as usual.
@@ -97,7 +108,7 @@ With no arguments, SONE launches the desktop application as usual.
 EXIT CODES:
     0  success
     1  command failed
-    2  SONE is not running"
+    2  SONE is not running (transport / status only)"
     );
     0
 }
@@ -288,4 +299,186 @@ fn read_str_array(meta: &HashMap<String, OwnedValue>, key: &str) -> Option<Strin
     } else {
         Some(arr.join(", "))
     }
+}
+
+// ─── Volume subcommand ──────────────────────────────────────────────────
+//
+// Bit-perfect contract: this code path NEVER touches the PCM stream.
+// It writes only to the ALSA mixer of the active exclusive device, via
+// the running SONE instance's MPRIS interface (preferred — keeps a single
+// source of truth + fires hooks + emits volume-changed events) or, if no
+// instance is running, opens the mixer directly with crate::hw_volume so
+// keybinds work even when the GUI is closed.
+
+fn run_vol(args: &[String]) -> i32 {
+    let arg = match args.first() {
+        Some(a) => a.as_str(),
+        None => {
+            eprintln!("sone: vol requires an argument (+N | -N | N | mute | get)");
+            return 1;
+        }
+    };
+
+    if arg == "get" {
+        return run_vol_get();
+    }
+
+    let target = match parse_vol_arg(arg) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("sone: {e}");
+            return 1;
+        }
+    };
+
+    // Prefer MPRIS path — it goes through the VolumeRouter which honours
+    // the bit-perfect contract and fires hooks + UI events.
+    match with_player(|p| {
+        let level = match target {
+            VolTarget::Set(v) => v,
+            VolTarget::Delta(d) => {
+                let cur: f64 = p.get_property("Volume").unwrap_or(0.0);
+                (cur + d).clamp(0.0, 1.0)
+            }
+            VolTarget::Mute => 0.0,
+        };
+        p.set_property("Volume", level)?;
+        Ok(level)
+    }) {
+        Ok(level) => {
+            println!("vol: {}%", (level * 100.0).round() as i32);
+            0
+        }
+        Err(CliError::NotRunning) => run_vol_direct(target),
+        Err(CliError::Bus(e)) => {
+            eprintln!("sone: {e}");
+            1
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VolTarget {
+    Set(f64),
+    Delta(f64),
+    Mute,
+}
+
+fn parse_vol_arg(s: &str) -> Result<VolTarget, String> {
+    if s == "mute" {
+        return Ok(VolTarget::Mute);
+    }
+    if let Some(rest) = s.strip_prefix('+') {
+        let n: f64 = rest.parse().map_err(|_| format!("bad delta: {s}"))?;
+        return Ok(VolTarget::Delta(n / 100.0));
+    }
+    if let Some(rest) = s.strip_prefix('-') {
+        let n: f64 = rest.parse().map_err(|_| format!("bad delta: {s}"))?;
+        return Ok(VolTarget::Delta(-n / 100.0));
+    }
+    let n: f64 = s.parse().map_err(|_| format!("bad volume: {s}"))?;
+    Ok(VolTarget::Set((n / 100.0).clamp(0.0, 1.0)))
+}
+
+fn run_vol_get() -> i32 {
+    match with_player(|p| {
+        let v: f64 = p.get_property("Volume")?;
+        Ok(v)
+    }) {
+        Ok(v) => {
+            println!("{}%", (v * 100.0).round() as i32);
+            0
+        }
+        Err(CliError::NotRunning) => match read_hw_volume_offline() {
+            Ok(Some(v)) => {
+                println!("{}%", (v * 100.0).round() as i32);
+                0
+            }
+            Ok(None) => {
+                eprintln!("sone: not running and no HW volume available offline");
+                2
+            }
+            Err(e) => {
+                eprintln!("sone: {e}");
+                1
+            }
+        },
+        Err(CliError::Bus(e)) => {
+            eprintln!("sone: {e}");
+            1
+        }
+    }
+}
+
+/// Direct ALSA-mixer path for when the GUI is closed. Reads the
+/// configured exclusive device from settings.json (transparently decrypted
+/// using the same crypto subsystem the GUI uses) and operates on it.
+/// Bit-perfect-safe — only the mixer is touched.
+fn run_vol_direct(target: VolTarget) -> i32 {
+    let level = match resolve_offline(target) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("sone: {e}");
+            return 1;
+        }
+    };
+    let hw = match open_offline_mixer() {
+        Ok(hw) => hw,
+        Err(e) => {
+            eprintln!("sone: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = hw.set(level as f32) {
+        eprintln!("sone: {e}");
+        return 1;
+    }
+    println!(
+        "vol: {}% (offline, direct mixer)",
+        (level * 100.0).round() as i32
+    );
+    0
+}
+
+fn resolve_offline(target: VolTarget) -> Result<f64, String> {
+    Ok(match target {
+        VolTarget::Set(v) => v,
+        VolTarget::Mute => 0.0,
+        VolTarget::Delta(d) => {
+            let hw = open_offline_mixer()?;
+            let cur = hw.get().unwrap_or(0.0) as f64;
+            (cur + d).clamp(0.0, 1.0)
+        }
+    })
+}
+
+fn read_hw_volume_offline() -> Result<Option<f32>, String> {
+    let hw = open_offline_mixer()?;
+    Ok(hw.get())
+}
+
+fn open_offline_mixer() -> Result<crate::hw_volume::HwVolume, String> {
+    let device = read_exclusive_device_from_settings()?;
+    crate::hw_volume::HwVolume::try_open(&device)
+        .ok_or_else(|| format!("device {device} has no usable HW volume control"))
+}
+
+/// Read `exclusive_device` from `~/.config/sone/settings.json`,
+/// transparently decrypting via the same Crypto module the GUI uses.
+fn read_exclusive_device_from_settings() -> Result<String, String> {
+    let mut config_dir = dirs::config_dir().ok_or("no config dir")?;
+    config_dir.push("sone");
+    let settings_path = config_dir.join("settings.json");
+    let raw = std::fs::read(&settings_path).map_err(|e| format!("read settings.json: {e}"))?;
+    let crypto =
+        crate::crypto::Crypto::new(&config_dir).map_err(|e| format!("crypto init: {e}"))?;
+    let plain = crypto
+        .decrypt(&raw)
+        .map_err(|e| format!("decrypt settings: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&plain).map_err(|e| format!("parse settings: {e}"))?;
+    v.get("exclusive_device")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "no exclusive_device set in settings".to_string())
 }

@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::sync::atomic::Ordering;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::tidal_api::StreamInfo;
 use crate::AppState;
@@ -165,16 +165,36 @@ pub async fn stop_track(state: State<'_, AppState>) -> Result<(), SoneError> {
 }
 
 #[tauri::command]
-pub fn set_volume(state: State<'_, AppState>, level: f32) -> Result<(), SoneError> {
-    state
-        .audio_player
-        .set_volume(level)
-        .map_err(SoneError::Audio)?;
+pub fn set_volume(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    level: f32,
+) -> Result<crate::VolumeRoute, SoneError> {
+    let route = crate::route_volume_change(&state, level)?;
 
     #[cfg(target_os = "linux")]
     state.mpris.send(crate::mpris::MprisCommand::SetVolume {
         volume: level as f64,
     });
+
+    // Notify hooks (out-of-band — never blocks).
+    let device = state.exclusive_device.lock().unwrap().clone();
+    state
+        .hooks
+        .on_volume_change(level, route, device.as_deref());
+
+    // Emit reactive event so the frontend can sync the slider with the
+    // route taken (HW vs SW vs Locked vs Gst). Source = "ui" because this
+    // command is called by the volume slider / MPRIS / CLI — wheel mirror
+    // emits its own events with source = "hw-wheel".
+    let _ = app.emit(
+        "volume-changed",
+        serde_json::json!({
+            "level": level,
+            "route": route,
+            "source": "ui",
+        }),
+    );
 
     // Save volume to settings
     if let Some(mut settings) = state.load_settings() {
@@ -182,7 +202,7 @@ pub fn set_volume(state: State<'_, AppState>, level: f32) -> Result<(), SoneErro
         state.save_settings(&settings).ok();
     }
 
-    Ok(())
+    Ok(route)
 }
 
 #[tauri::command]

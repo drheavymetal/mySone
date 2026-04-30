@@ -15,6 +15,8 @@ import {
   signalPathAtom,
   streamInfoAtom,
   currentTrackAtom,
+  volumeRouteAtom,
+  hwVolumeStatusAtom,
 } from "../atoms/playback";
 
 interface SignalPathPanelProps {
@@ -46,6 +48,8 @@ export default function SignalPathPanel({
   const sp = useAtomValue(signalPathAtom);
   const streamInfo = useAtomValue(streamInfoAtom);
   const currentTrack = useAtomValue(currentTrackAtom);
+  const volumeRoute = useAtomValue(volumeRouteAtom);
+  const hwVolume = useAtomValue(hwVolumeStatusAtom);
 
   useEffect(() => {
     if (!open) return;
@@ -232,6 +236,54 @@ export default function SignalPathPanel({
               }
               line2={sp?.outputDevice ?? undefined}
             />
+          </div>
+
+          {/* Volume control routing */}
+          <div>
+            <div className="text-[10px] font-bold tracking-wider text-th-text-faint mb-1.5">
+              VOLUME CONTROL
+            </div>
+            <div className="text-[12px] text-th-text-primary">
+              {volumeRoute === "hw" && (
+                <span>
+                  HW{" "}
+                  <span className="text-th-text-muted">— DAC analog gain</span>
+                  {hwVolume.controlName && (
+                    <span className="text-th-text-faint">
+                      {" "}
+                      ({hwVolume.controlName})
+                    </span>
+                  )}
+                </span>
+              )}
+              {volumeRoute === "sw" && (
+                <span>
+                  SW{" "}
+                  <span className="text-th-text-muted">
+                    — PCM sample scaling (not bit-perfect)
+                  </span>
+                </span>
+              )}
+              {volumeRoute === "locked" && (
+                <span className="text-amber-300">
+                  Locked{" "}
+                  <span className="text-th-text-muted">
+                    — bit-perfect on, DAC has no mixer; use physical control
+                  </span>
+                </span>
+              )}
+              {volumeRoute === "gst" && (
+                <span>
+                  GStreamer{" "}
+                  <span className="text-th-text-muted">
+                    — system mixer pipeline
+                  </span>
+                </span>
+              )}
+              {volumeRoute === null && (
+                <span className="text-th-text-muted">unknown</span>
+              )}
+            </div>
           </div>
 
           {/* Mode flags */}

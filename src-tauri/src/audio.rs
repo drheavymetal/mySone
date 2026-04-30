@@ -675,8 +675,19 @@ fn spawn_alsa_writer(
                                 }
                             }
                         }
-                        let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
-                        apply_volume(&mut chunk.data, &current_fmt, vol);
+                        // ── Bit-perfect hard guard ──────────────────────────────
+                        // In bit-perfect mode the PCM stream MUST reach the DAC
+                        // unmodified. Volume control in this mode is ONLY allowed
+                        // out-of-band via the ALSA mixer (HwVolume in volume.rs),
+                        // never through sample scaling. This branch never reads
+                        // combined_vol nor calls apply_volume — the dead code is
+                        // load-bearing as a defense-in-depth contract: even if a
+                        // future change accidentally writes to combined_vol while
+                        // bit_perfect=true, the bytes here are untouched.
+                        if !bit_perfect {
+                            let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
+                            apply_volume(&mut chunk.data, &current_fmt, vol);
+                        }
                         if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
                             app_handle.emit("audio-error", serde_json::json!({ "kind": kind })).ok();
                             tearing_down.store(true, Ordering::SeqCst);
@@ -790,8 +801,11 @@ fn spawn_alsa_writer(
                                         pcm.drop().ok();
                                         pcm.prepare().ok();
                                     }
-                                    let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
-                                    apply_volume(&mut chunk.data, &current_fmt, vol);
+                                    // Bit-perfect hard guard — see comment in main loop.
+                                    if !bit_perfect {
+                                        let vol = f32::from_bits(combined_vol.load(Ordering::Relaxed));
+                                        apply_volume(&mut chunk.data, &current_fmt, vol);
+                                    }
                                     if let Err(kind) = write_bytes(&pcm, &chunk.data, &current_fmt, &frames_written, &silence_buf) {
                                         app_handle.emit("audio-error", serde_json::json!({ "kind": kind })).ok();
                                         break 'main;

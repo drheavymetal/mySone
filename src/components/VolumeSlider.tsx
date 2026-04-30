@@ -1,7 +1,11 @@
 import { memo } from "react";
 import { useAtomValue } from "jotai";
 import { Volume2, VolumeX, Volume1 } from "lucide-react";
-import { volumeAtom, bitPerfectAtom } from "../atoms/playback";
+import {
+  volumeAtom,
+  bitPerfectAtom,
+  hwVolumeStatusAtom,
+} from "../atoms/playback";
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 
 interface VolumeSliderProps {
@@ -20,12 +24,27 @@ const VolumeSlider = memo(function VolumeSlider({
 }: VolumeSliderProps) {
   const volume = useAtomValue(volumeAtom);
   const bitPerfect = useAtomValue(bitPerfectAtom);
+  const hwVolume = useAtomValue(hwVolumeStatusAtom);
   const { setVolume } = usePlaybackActions();
 
-  const displayVolume = bitPerfect ? 1 : volume;
+  // Lock the slider only when bit-perfect is on AND the DAC has no
+  // hardware volume control. With HW available the slider drives the
+  // DAC's analog gain stage — bits remain untouched, so bit-perfect
+  // is preserved even while the user adjusts volume.
+  const locked = bitPerfect && !hwVolume.available;
+
+  // When HW is in control, the slider value comes from the live HW level
+  // (kept in sync via the `volume-changed` event). When locked, pin to 1.
+  const displayVolume = locked ? 1 : volume;
+
+  const tooltip = locked
+    ? "Bit-perfect on, DAC has no mixer control — use the DAC's physical volume"
+    : bitPerfect && hwVolume.available
+      ? `DAC analog volume${hwVolume.controlName ? ` (${hwVolume.controlName})` : ""}`
+      : undefined;
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (bitPerfect) return;
+    if (locked) return;
     setVolume(parseFloat(e.target.value));
   };
 
@@ -34,24 +53,25 @@ const VolumeSlider = memo(function VolumeSlider({
 
   return (
     <div
-      className={`flex items-center gap-2 group/vol ${widthClass} ${bitPerfect ? "opacity-40 cursor-not-allowed" : ""}`}
+      className={`flex items-center gap-2 group/vol ${widthClass} ${locked ? "opacity-40 cursor-not-allowed" : ""}`}
+      title={tooltip}
     >
       <button
         onClick={() => {
-          if (bitPerfect) return;
+          if (locked) return;
           setVolume(volume > 0 ? 0 : 1);
         }}
         className={`flex-shrink-0 transition-colors duration-150 ${
-          bitPerfect
+          locked
             ? "text-th-text-faint cursor-not-allowed"
             : "text-th-text-secondary hover:text-th-text-primary"
         }`}
-        disabled={bitPerfect}
+        disabled={locked}
       >
         <VolumeIcon size={16} strokeWidth={2} />
       </button>
       <div
-        className={`flex-1 relative rounded-full ${bitPerfect ? "cursor-not-allowed" : "cursor-pointer"}`}
+        className={`flex-1 relative rounded-full ${locked ? "cursor-not-allowed" : "cursor-pointer"}`}
       >
         <input
           type="range"
@@ -73,8 +93,8 @@ const VolumeSlider = memo(function VolumeSlider({
                 }
               : undefined
           }
-          disabled={bitPerfect}
-          className={`absolute inset-0 w-full h-full opacity-0 z-10 ${bitPerfect ? "cursor-not-allowed" : "cursor-pointer"}`}
+          disabled={locked}
+          className={`absolute inset-0 w-full h-full opacity-0 z-10 ${locked ? "cursor-not-allowed" : "cursor-pointer"}`}
         />
         <div className="relative h-[3px] group-hover/vol:h-[4px] transition-[height] duration-100 rounded-full">
           <div className="absolute inset-0 bg-th-slider-track rounded-full" />

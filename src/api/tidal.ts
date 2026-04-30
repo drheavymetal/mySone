@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SignalPath } from "../atoms/playback";
+import type { SignalPath, HwVolumeStatus } from "../atoms/playback";
 import type {
   AlbumDetail,
   AlbumPageCached,
@@ -1104,4 +1104,10 @@ export async function loadPlaybackQueue(): Promise<string | null> {
 
 export async function getSignalPath(): Promise<SignalPath> {
   return invoke<SignalPath>("get_signal_path");
+}
+
+// ==================== Hardware volume ====================
+
+export async function getHwVolumeStatus(): Promise<HwVolumeStatus> {
+  return invoke<HwVolumeStatus>("get_hw_volume_status");
 }

@@ -9,6 +9,7 @@ mod embedded_lastfm;
 mod embedded_librefm;
 mod error;
 mod hooks;
+mod hw_volume;
 mod idle_inhibit;
 #[cfg(target_os = "linux")]
 mod mpris;
@@ -25,6 +26,7 @@ pub use signal_path::{SignalPath, SignalPathTracker};
 use audio::{AudioDevice, AudioPlayer};
 use cache::DiskCache;
 use crypto::Crypto;
+use hw_volume::HwVolume;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -169,6 +171,17 @@ pub struct AppState {
     pub signal_path: Arc<SignalPathTracker>,
     pub hooks: Arc<hooks::HooksManager>,
     pub stats: Arc<stats::StatsDb>,
+    /// Hardware volume control on the active exclusive ALSA device, if the
+    /// DAC exposes a usable mixer control. None when not in DirectAlsa mode
+    /// or the device has no playback volume control.
+    pub hw_volume: std::sync::Mutex<Option<Arc<HwVolume>>>,
+    /// Monotonic id used by the wheel-mirror thread to know when the
+    /// underlying device has been swapped — incremented on every
+    /// `open_hw_volume`. Old mirror threads exit when they see a newer id.
+    pub hw_volume_bus: Arc<std::sync::atomic::AtomicU64>,
+    /// AppHandle stash — the hw_volume open path needs it to spawn the
+    /// wheel-mirror thread. Set once at startup.
+    pub app_handle: std::sync::Mutex<Option<tauri::AppHandle>>,
 }
 
 pub fn now_secs() -> u64 {
@@ -285,13 +298,16 @@ impl AppState {
             last_replay_gain: AtomicU64::new(f64::NAN.to_bits()),
             last_peak_amplitude: AtomicU64::new(f64::NAN.to_bits()),
             #[cfg(target_os = "linux")]
-            mpris: mpris::MprisHandle::new(app_handle),
+            mpris: mpris::MprisHandle::new(app_handle.clone()),
             scrobble_manager,
             discord: discord_handle,
             idle_inhibitor: Mutex::new(idle_inhibit::IdleInhibitor::new()),
             signal_path,
             hooks: Arc::new(hooks::HooksManager::new(&config_dir)),
             stats,
+            hw_volume: std::sync::Mutex::new(None),
+            hw_volume_bus: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            app_handle: std::sync::Mutex::new(Some(app_handle)),
         }
     }
 
@@ -343,6 +359,117 @@ impl AppState {
         fs::write(&path, encrypted)?;
         Ok(())
     }
+
+    /// Open (or replace) the HW volume mixer for the given exclusive ALSA
+    /// device. Returns whether a usable HW control was found. Called from
+    /// the exclusive-mode lifecycle (set_exclusive_device, set_exclusive_mode).
+    /// Spawns a wheel-mirror polling thread so the DAC's physical control
+    /// reflects in the UI / MPRIS in real time.
+    pub fn open_hw_volume(&self, device: &str) -> bool {
+        let opened = HwVolume::try_open(device).map(Arc::new);
+        let available = opened.is_some();
+        // Bump the bus id BEFORE swapping, so any in-flight mirror thread
+        // exits on its next tick instead of polling the old (about-to-be-
+        // dropped) HwVolume.
+        let bus_id = self
+            .hw_volume_bus
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        *self.hw_volume.lock().unwrap() = opened.clone();
+
+        if let (Some(hw), Some(app)) = (opened, self.app_handle.lock().unwrap().clone()) {
+            #[cfg(target_os = "linux")]
+            hw_volume::spawn_wheel_mirror(hw, app, Arc::clone(&self.hw_volume_bus), bus_id);
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (hw, app, bus_id);
+            }
+        }
+        available
+    }
+
+    pub fn close_hw_volume(&self) {
+        // Bump bus so any active mirror thread observes the change and exits.
+        self.hw_volume_bus
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self.hw_volume.lock().unwrap() = None;
+    }
+
+    pub fn current_hw_volume(&self) -> Option<Arc<HwVolume>> {
+        self.hw_volume.lock().unwrap().as_ref().map(Arc::clone)
+    }
+}
+
+/// Result of a routed volume change. Reported back to the frontend so the
+/// UI can reflect what actually happened (HW vs SW vs rejection).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VolumeRoute {
+    /// Applied to the DAC's analog gain via ALSA mixer (preserves bit-perfect).
+    Hw,
+    /// Applied to the PCM stream via software scaling (NOT bit-perfect).
+    Sw,
+    /// Rejected: bit-perfect on, no HW control available. Volume locked at 1.0.
+    Locked,
+    /// Applied to the GStreamer volume element in the Normal pipeline.
+    Gst,
+}
+
+/// Single-source-of-truth volume routing.
+///
+/// Bit-perfect contract: when `bit_perfect=true`, the only paths that may
+/// run are `Hw` (mixer) or `Locked` (no-op). The `Sw` path is FORBIDDEN
+/// in bit-perfect mode — and even if a future bug bypassed this routing,
+/// the alsa-writer thread has a hard guard that refuses to apply software
+/// volume when bit_perfect is on.
+pub fn route_volume_change(state: &AppState, level: f32) -> Result<VolumeRoute, SoneError> {
+    let level = level.clamp(0.0, 1.0);
+    let exclusive = state.exclusive_mode.load(Ordering::Relaxed);
+    let bit_perfect = state.bit_perfect.load(Ordering::Relaxed);
+
+    if !exclusive && !bit_perfect {
+        // Normal pipeline: GStreamer volume element handles it.
+        state
+            .audio_player
+            .set_volume(level)
+            .map_err(SoneError::Audio)?;
+        return Ok(VolumeRoute::Gst);
+    }
+
+    // DirectAlsa territory. Try HW first.
+    if let Some(hw) = state.current_hw_volume() {
+        hw.set(level).map_err(SoneError::Audio)?;
+        // In bit-perfect mode the SW path is forbidden; freeze user_volume
+        // at 1.0 so combined_vol stays unity (irrelevant due to writer
+        // guard, but keeps internal state honest).
+        // In exclusive (non-BP) mode we ALSO skip the SW path because HW is
+        // strictly better — sample-scaling adds quantization noise.
+        state
+            .audio_player
+            .set_volume(1.0)
+            .map_err(SoneError::Audio)?;
+        return Ok(VolumeRoute::Hw);
+    }
+
+    // No HW control available.
+    if bit_perfect {
+        // Hard reject: bit-perfect promise must hold. Frontend will read
+        // this and lock the slider.
+        state
+            .audio_player
+            .set_volume(1.0)
+            .map_err(SoneError::Audio)?;
+        return Ok(VolumeRoute::Locked);
+    }
+
+    // Exclusive without bit-perfect, no HW: fall back to SW sample scaling.
+    // Acceptable here because the user explicitly chose exclusive (system-
+    // bypass for latency / format-locking) without the strict-bits promise.
+    state
+        .audio_player
+        .set_volume(level)
+        .map_err(SoneError::Audio)?;
+    Ok(VolumeRoute::Sw)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -387,7 +514,13 @@ pub fn run() {
                 let bp = state.bit_perfect.load(std::sync::atomic::Ordering::Relaxed);
                 let dev = state.exclusive_device.lock().unwrap().clone();
                 if excl || bp {
-                    state.audio_player.set_exclusive_mode(excl, dev).ok();
+                    state
+                        .audio_player
+                        .set_exclusive_mode(excl, dev.clone())
+                        .ok();
+                    if let Some(ref d) = dev {
+                        state.open_hw_volume(d);
+                    }
                 }
                 if bp {
                     state.audio_player.set_bit_perfect(true).ok();
@@ -752,6 +885,7 @@ pub fn run() {
             commands::utility::inhibit_idle,
             commands::utility::uninhibit_idle,
             commands::utility::get_signal_path,
+            commands::utility::get_hw_volume_status,
             // stats
             commands::stats::get_stats_overview,
             commands::stats::get_top_tracks,

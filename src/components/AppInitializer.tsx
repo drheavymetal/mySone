@@ -53,6 +53,9 @@ import {
   streamInfoAtom,
   signalPathAtom,
   type SignalPath,
+  volumeRouteAtom,
+  hwVolumeStatusAtom,
+  type VolumeRoute,
 } from "../atoms/playback";
 import { drawerOpenAtom, maximizedPlayerAtom } from "../atoms/ui";
 import { proxySettingsAtom, type ProxySettings } from "../atoms/proxy";
@@ -75,6 +78,7 @@ import {
   normalizePlaylistFolders,
   getTrack,
   getSignalPath,
+  getHwVolumeStatus,
 } from "../api/tidal";
 
 import type {
@@ -672,6 +676,40 @@ export function AppInitializer() {
       .catch(() => {});
     const unlisten = listen<SignalPath>("signal-path-changed", (e) => {
       store.set(signalPathAtom, e.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [store]);
+
+  // ================================================================
+  //  HW VOLUME STATUS + reactive volume route
+  //  Snapshot at startup so the slider knows whether the DAC has a
+  //  usable mixer control. The `volume-changed` event covers all
+  //  paths: UI slider (source=ui), MPRIS (source=ui), DAC physical
+  //  wheel (source=hw-wheel). Each carries the route taken so the UI
+  //  can reflect bit-perfect-safe behaviour honestly.
+  // ================================================================
+  useEffect(() => {
+    getHwVolumeStatus()
+      .then((s) => store.set(hwVolumeStatusAtom, s))
+      .catch(() => {});
+
+    const unlisten = listen<{
+      level: number;
+      route: VolumeRoute;
+      source: string;
+    }>("volume-changed", (e) => {
+      store.set(volumeRouteAtom, e.payload.route);
+      // For wheel-mirror events, sync the slider value so the UI
+      // reflects the DAC's physical state.
+      if (e.payload.source === "hw-wheel") {
+        store.set(volumeAtom, e.payload.level);
+      }
+      // Refresh hw status (level changed at minimum).
+      getHwVolumeStatus()
+        .then((s) => store.set(hwVolumeStatusAtom, s))
+        .catch(() => {});
     });
     return () => {
       unlisten.then((fn) => fn());

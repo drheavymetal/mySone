@@ -50,3 +50,22 @@ export const allowExplicitAtom = atomWithStorage("sone.allowExplicit.v1", true);
 export const exclusiveModeAtom = atom(false);
 export const bitPerfectAtom = atom(false);
 export const exclusiveDeviceAtom = atom<string | null>(null);
+
+/** "hw" = applied via DAC ALSA mixer (analog gain — bit-perfect safe).
+ *  "sw" = applied via PCM sample scaling (NOT bit-perfect).
+ *  "locked" = bit-perfect on, no HW control — slider disabled.
+ *  "gst" = Normal pipeline GStreamer volume element. */
+export type VolumeRoute = "hw" | "sw" | "locked" | "gst";
+
+export interface HwVolumeStatus {
+  available: boolean;
+  level: number | null;
+  controlName: string | null;
+}
+
+export const volumeRouteAtom = atom<VolumeRoute | null>(null);
+export const hwVolumeStatusAtom = atom<HwVolumeStatus>({
+  available: false,
+  level: null,
+  controlName: null,
+});
