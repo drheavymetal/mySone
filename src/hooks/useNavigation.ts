@@ -95,6 +95,10 @@ export function useNavigation() {
     navigate(setCurrentView, { type: "explore" });
   }, [setCurrentView]);
 
+  const navigateToStats = useCallback(() => {
+    navigate(setCurrentView, { type: "stats" });
+  }, [setCurrentView]);
+
   const navigateToExplorePage = useCallback(
     (apiPath: string, title: string) => {
       navigate(setCurrentView, { type: "explorePage", apiPath, title });
@@ -136,5 +140,6 @@ export function useNavigation() {
     navigateToExplorePage,
     navigateToLibraryViewAll,
     navigateToPlaylistFolder,
+    navigateToStats,
   };
 }

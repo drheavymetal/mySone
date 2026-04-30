@@ -14,6 +14,7 @@ mod idle_inhibit;
 mod mpris;
 mod scrobble;
 mod signal_path;
+mod stats;
 #[cfg(target_os = "linux")]
 mod tray;
 mod tidal_api;
@@ -167,6 +168,7 @@ pub struct AppState {
     pub idle_inhibitor: Mutex<idle_inhibit::IdleInhibitor>,
     pub signal_path: Arc<SignalPathTracker>,
     pub hooks: Arc<hooks::HooksManager>,
+    pub stats: Arc<stats::StatsDb>,
 }
 
 pub fn now_secs() -> u64 {
@@ -242,11 +244,18 @@ impl AppState {
                     .build()
                     .unwrap()
             });
+
+        let stats = Arc::new(stats::StatsDb::open(&config_dir).unwrap_or_else(|e| {
+            log::error!("Failed to open stats db: {e}. Listening stats disabled.");
+            panic!("StatsDb open failed: {e}");
+        }));
+
         let scrobble_manager = scrobble::ScrobbleManager::new(
             app_handle.clone(),
             crypto.clone(),
             &config_dir,
             scrobble_http_client,
+            Arc::clone(&stats),
         );
 
         let discord_rpc_enabled = saved.as_ref().map(|s| s.discord_rpc).unwrap_or(true);
@@ -282,6 +291,7 @@ impl AppState {
             idle_inhibitor: Mutex::new(idle_inhibit::IdleInhibitor::new()),
             signal_path,
             hooks: Arc::new(hooks::HooksManager::new(&config_dir)),
+            stats,
         }
     }
 
@@ -742,6 +752,13 @@ pub fn run() {
             commands::utility::inhibit_idle,
             commands::utility::uninhibit_idle,
             commands::utility::get_signal_path,
+            // stats
+            commands::stats::get_stats_overview,
+            commands::stats::get_top_tracks,
+            commands::stats::get_top_artists,
+            commands::stats::get_top_albums,
+            commands::stats::get_listening_heatmap,
+            commands::stats::get_daily_minutes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

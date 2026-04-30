@@ -188,6 +188,7 @@ export type AppView =
     }
   | { type: "explore" }
   | { type: "explorePage"; apiPath: string; title: string }
+  | { type: "stats" }
   | {
       type: "artistTracks";
       artistId: number;

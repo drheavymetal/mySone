@@ -1,4 +1,13 @@
-import { Home, Compass, Library, Heart, Music, User, FolderOpen } from "lucide-react";
+import {
+  Home,
+  Compass,
+  Library,
+  Heart,
+  Music,
+  User,
+  FolderOpen,
+  BarChart3,
+} from "lucide-react";
 import SortDropdown from "./SortDropdown";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import SidebarSkeleton from "./SidebarSkeleton";
@@ -52,6 +61,7 @@ export default function Sidebar() {
     navigateToExplore,
     navigateToLibraryViewAll,
     navigateToPlaylistFolder,
+    navigateToStats,
     currentView,
   } = useNavigation();
   const { authTokens } = useAuth();
@@ -385,6 +395,18 @@ export default function Sidebar() {
           {!isCollapsed && (
             <span className="font-semibold text-sm">Explore</span>
           )}
+        </button>
+        <button
+          onClick={navigateToStats}
+          className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-md transition-colors duration-150 group ${
+            currentView.type === "stats"
+              ? "text-th-text-primary bg-th-hl-med"
+              : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-border-subtle"
+          } ${isCollapsed ? "justify-center px-0" : ""}`}
+          title="Stats"
+        >
+          <BarChart3 size={20} strokeWidth={2} />
+          {!isCollapsed && <span className="font-semibold text-sm">Stats</span>}
         </button>
       </nav>
 

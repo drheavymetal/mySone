@@ -14,6 +14,7 @@ use tauri::Emitter;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
+use crate::stats::{PlayRecord, StatsDb};
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -142,6 +143,7 @@ pub struct ScrobbleManager {
     current_track: Arc<Mutex<Option<TrackPlayback>>>,
     app_handle: tauri::AppHandle,
     mb_lookup: Arc<musicbrainz::MusicBrainzLookup>,
+    stats: Arc<StatsDb>,
 }
 
 impl ScrobbleManager {
@@ -150,6 +152,7 @@ impl ScrobbleManager {
         crypto: Arc<Crypto>,
         config_dir: &Path,
         http_client: reqwest::Client,
+        stats: Arc<StatsDb>,
     ) -> Self {
         let queue_path = config_dir.join("scrobble_queue.bin");
         Self {
@@ -158,6 +161,35 @@ impl ScrobbleManager {
             current_track: Arc::new(Mutex::new(None)),
             app_handle,
             mb_lookup: Arc::new(musicbrainz::MusicBrainzLookup::new(config_dir, http_client)),
+            stats,
+        }
+    }
+
+    /// Persist a finished playback to the local stats DB. Called whenever
+    /// a track transitions out of `current_track` (replaced, stopped, or
+    /// app shutdown). Quiet on errors — stats are best-effort.
+    fn record_to_stats(&self, p: &TrackPlayback) {
+        let listened = p.elapsed();
+        if listened < 1.0 {
+            return;
+        }
+        let now = crate::now_secs() as i64;
+        let record = PlayRecord {
+            started_at: p.track.timestamp,
+            finished_at: now,
+            track_id: p.track.track_id,
+            title: &p.track.track,
+            artist: &p.track.artist,
+            album: p.track.album.as_deref(),
+            album_artist: p.track.album_artist.as_deref(),
+            duration_secs: p.track.duration_secs,
+            listened_secs: listened as u32,
+            completed: p.meets_threshold(),
+            isrc: p.track.isrc.as_deref(),
+            chosen_by_user: p.track.chosen_by_user,
+        };
+        if let Err(e) = self.stats.record_play(&record) {
+            log::warn!("[stats] record_play failed: {e}");
         }
     }
 
@@ -211,19 +243,23 @@ impl ScrobbleManager {
     /// Called when a new track begins playing.
     pub async fn on_track_started(&self, track: ScrobbleTrack) {
         // 1. Single lock: extract previous, set new immediately
-        let prev_track = {
+        let prev_playback = {
             let mut current = self.current_track.lock().await;
-            let prev = current.take().and_then(|p| {
-                if !p.scrobbled && p.meets_threshold() {
-                    Some(p.track)
-                } else {
-                    None
-                }
-            });
+            let prev = current.take();
             *current = Some(TrackPlayback::new(track.clone()));
             prev
         };
         // Lock released — new track is live with correct Instant::now()
+
+        // Persist the finished play locally (fires for every track, even skips).
+        let prev_track = prev_playback.and_then(|p| {
+            self.record_to_stats(&p);
+            if !p.scrobbled && p.meets_threshold() {
+                Some(p.track)
+            } else {
+                None
+            }
+        });
 
         // 2. Network I/O runs concurrently, AFTER track is set
         tokio::join!(
@@ -303,17 +339,19 @@ impl ScrobbleManager {
     /// Called on explicit stop (user action). Scrobbles if threshold is met
     /// and unconditionally clears the current track.
     pub async fn on_track_stopped(&self) {
-        let track_to_scrobble = {
+        let prev_playback = {
             let mut current = self.current_track.lock().await;
-            current.take().and_then(|mut p| {
-                if !p.scrobbled && p.meets_threshold() {
-                    p.scrobbled = true;
-                    Some(p.track)
-                } else {
-                    None
-                }
-            })
+            current.take()
         };
+        let track_to_scrobble = prev_playback.and_then(|mut p| {
+            self.record_to_stats(&p);
+            if !p.scrobbled && p.meets_threshold() {
+                p.scrobbled = true;
+                Some(p.track)
+            } else {
+                None
+            }
+        });
         if let Some(track) = track_to_scrobble {
             self.dispatch_scrobble(track).await;
         }
@@ -322,19 +360,19 @@ impl ScrobbleManager {
     /// Shutdown: scrobble current if threshold met, persist queue.
     pub async fn flush(&self) {
         // Try to scrobble current track with a 2s timeout
-        let track_to_scrobble = {
+        let prev_playback = {
             let mut current = self.current_track.lock().await;
-            if let Some(mut playback) = current.take() {
-                if !playback.scrobbled && playback.meets_threshold() {
-                    playback.scrobbled = true;
-                    Some(playback.track.clone())
-                } else {
-                    None
-                }
+            current.take()
+        };
+        let track_to_scrobble = prev_playback.and_then(|mut playback| {
+            self.record_to_stats(&playback);
+            if !playback.scrobbled && playback.meets_threshold() {
+                playback.scrobbled = true;
+                Some(playback.track.clone())
             } else {
                 None
             }
-        };
+        });
 
         if let Some(track) = track_to_scrobble {
             let _ =

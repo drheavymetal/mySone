@@ -12,6 +12,7 @@ import MixPage from "./components/MixPage";
 import ExplorePage from "./components/ExplorePage";
 import ExploreSubPage from "./components/ExploreSubPage";
 import LibraryViewAll from "./components/LibraryViewAll";
+import StatsPage from "./components/StatsPage";
 import Login from "./components/Login";
 import { AppInitializer } from "./components/AppInitializer";
 import { useAuth } from "./hooks/useAuth";
@@ -180,6 +181,8 @@ function AppContent() {
             folderName={currentView.folderName}
           />
         );
+      case "stats":
+        return <StatsPage />;
       case "home":
       default:
         return <Home />;
