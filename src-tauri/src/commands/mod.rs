@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod library;
+pub mod llm;
 pub mod metadata;
 pub mod pages;
 pub mod playback;

@@ -11,6 +11,7 @@ mod error;
 mod hooks;
 mod hw_volume;
 mod idle_inhibit;
+mod llm;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod scrobble;
@@ -103,6 +104,8 @@ pub struct Settings {
     #[serde(default)]
     pub client_secret: String,
     #[serde(default)]
+    pub llm: llm::LLMSettings,
+    #[serde(default)]
     pub minimize_to_tray: bool,
     #[serde(default = "defaults::yes")]
     pub decorations: bool,
@@ -130,6 +133,7 @@ impl Default for Settings {
             last_track_id: None,
             client_id: String::new(),
             client_secret: String::new(),
+            llm: Default::default(),
             minimize_to_tray: false,
             decorations: true,
             volume_normalization: false,
@@ -145,6 +149,7 @@ impl Default for Settings {
 
 pub struct AppState {
     pub audio_player: AudioPlayer,
+    pub llm_settings: Mutex<llm::LLMSettings>,
     pub tidal_client: Mutex<TidalClient>,
     pub settings_path: PathBuf,
     pub cache_dir: PathBuf,
@@ -281,8 +286,14 @@ impl AppState {
         signal_path.set_audio_modes(exclusive_mode, bit_perfect);
         signal_path.set_normalization_enabled(volume_normalization);
 
+        let llm_settings_initial = saved
+            .as_ref()
+            .map(|s| s.llm.clone())
+            .unwrap_or_default();
+
         Self {
             audio_player: AudioPlayer::new(app_handle.clone(), Arc::clone(&signal_path)),
+            llm_settings: Mutex::new(llm_settings_initial),
             tidal_client: Mutex::new(TidalClient::new(&proxy_settings)),
             settings_path,
             cache_dir,
@@ -893,6 +904,11 @@ pub fn run() {
             commands::stats::get_top_albums,
             commands::stats::get_listening_heatmap,
             commands::stats::get_daily_minutes,
+            // llm
+            commands::llm::get_llm_settings,
+            commands::llm::set_llm_settings,
+            commands::llm::llm_chat,
+            commands::llm::llm_ping,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

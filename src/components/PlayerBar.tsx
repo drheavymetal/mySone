@@ -8,6 +8,7 @@ import {
   Heart,
   ListMusic,
   Mic2,
+  Sparkles,
 
   Maximize2,
   MoreHorizontal,
@@ -43,6 +44,7 @@ import SignalPathPanel from "./SignalPathPanel";
 import LyricsPanel from "./LyricsPanel";
 import LivePaintingMode from "./LivePaintingMode";
 import LibraryGalaxy from "./LibraryGalaxy";
+import QueueChatPanel from "./QueueChatPanel";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -472,6 +474,7 @@ export default function PlayerBar() {
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [livePaintingOpen, setLivePaintingOpen] = useState(false);
   const [galaxyOpen, setGalaxyOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div className={`player-bar h-[90px] bg-th-elevated border-t border-th-border-subtle px-4 flex items-center justify-between relative z-50 select-none ${maximized ? "invisible" : ""}`}>
@@ -496,6 +499,13 @@ export default function PlayerBar() {
           <Mic2 size={18} />
         </button>
         <button
+          onClick={() => setChatOpen(true)}
+          title="Construir cola con IA"
+          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
+        >
+          <Sparkles size={18} />
+        </button>
+        <button
           onClick={() => setLivePaintingOpen(true)}
           title="Modo cuadro vivo"
           className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
@@ -518,6 +528,7 @@ export default function PlayerBar() {
       <LyricsPanel open={lyricsOpen} onClose={() => setLyricsOpen(false)} />
       <LivePaintingMode open={livePaintingOpen} onClose={() => setLivePaintingOpen(false)} />
       <LibraryGalaxy open={galaxyOpen} onClose={() => setGalaxyOpen(false)} />
+      <QueueChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }
