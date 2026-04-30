@@ -38,6 +38,7 @@ import { useMiniplayerWindow } from "../hooks/useMiniplayerWindow";
 import { TrackArtists } from "./TrackArtists";
 import QualityBadge from "./QualityBadge";
 import SignalPathPanel from "./SignalPathPanel";
+import LyricsPanel from "./LyricsPanel";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -464,6 +465,7 @@ const MiniPlayerButton = memo(function MiniPlayerButton() {
 export default function PlayerBar() {
   const maximized = useAtomValue(maximizedPlayerAtom);
   const [signalPathOpen, setSignalPathOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
 
   return (
     <div className={`player-bar h-[90px] bg-th-elevated border-t border-th-border-subtle px-4 flex items-center justify-between relative z-50 select-none ${maximized ? "invisible" : ""}`}>
@@ -480,12 +482,20 @@ export default function PlayerBar() {
       {/* Right: Volume & Extras */}
       <div className="flex items-center justify-end gap-4 w-[30%] min-w-[180px]">
         <QualityBadge onClick={() => setSignalPathOpen(true)} />
+        <button
+          onClick={() => setLyricsOpen(true)}
+          title="Letras"
+          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
+        >
+          <Mic2 size={18} />
+        </button>
         <DrawerButtons />
         <MiniPlayerButton />
         <MaximizeButton />
       </div>
 
       <SignalPathPanel open={signalPathOpen} onClose={() => setSignalPathOpen(false)} />
+      <LyricsPanel open={lyricsOpen} onClose={() => setLyricsOpen(false)} />
     </div>
   );
 }
