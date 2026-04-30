@@ -166,9 +166,16 @@ fn build_share_monitor(
         .build()
         .map_err(|e| format!("share oggmux: {e}"))?;
 
+    // async=false: do NOT block pipeline preroll on this branch. With the
+    // valve closed (default), opusenc receives no buffers, so the appsink
+    // would otherwise hold the whole pipeline in PAUSED forever.
+    // sync=false: don't drop late buffers — we want every Opus page sent.
+    // drop=true + max-buffers caps the queue if HTTP listeners are slow.
     let appsink = gst_app::AppSink::builder()
         .max_buffers(64)
         .sync(false)
+        .async_(false)
+        .drop(true)
         .build();
 
     appsink.set_callbacks(

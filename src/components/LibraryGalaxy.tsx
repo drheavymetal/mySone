@@ -45,15 +45,18 @@ export default function LibraryGalaxy({ open, onClose }: Props) {
 
     (async () => {
       try {
-        // Fetch a generous slice of the user's favorites. Most libraries fit.
+        const userId = await invoke<number>("get_session_user_id");
         const all: Track[] = [];
         let offset = 0;
         const pageSize = 200;
         const maxTracks = 1500;
         while (all.length < maxTracks) {
           const page = await invoke<PaginatedTracks>("get_favorite_tracks", {
-            limit: pageSize,
+            userId,
             offset,
+            limit: pageSize,
+            order: "DATE",
+            orderDirection: "DESC",
           });
           const items = page.items ?? [];
           if (items.length === 0) break;
