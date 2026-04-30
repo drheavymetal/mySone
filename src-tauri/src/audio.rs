@@ -162,7 +162,7 @@ fn build_share_monitor(
         .map_err(|e| format!("share opusenc: {e}"))?;
     // oggmux: standard browser-playable container for Opus.
     let oggmux = gst::ElementFactory::make("oggmux")
-        .property("max-delay", 1_000_000_000i64)
+        .property("max-delay", 1_000_000_000u64)
         .build()
         .map_err(|e| format!("share oggmux: {e}"))?;
 
