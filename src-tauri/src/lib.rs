@@ -189,6 +189,14 @@ pub struct AppState {
     /// AppHandle stash — the hw_volume open path needs it to spawn the
     /// wheel-mirror thread. Set once at startup.
     pub app_handle: std::sync::Mutex<Option<tauri::AppHandle>>,
+    /// Last quality tier that succeeded against the current TIDAL session.
+    /// Used as the starting point for the next track's cascade so we skip
+    /// dead tiers (saves 1-2 s per track change).
+    pub last_successful_quality: std::sync::Mutex<String>,
+    /// Pre-fetched stream URLs keyed by track id with their fetch instant.
+    /// Entries older than 60 s are discarded — TIDAL signed URLs expire.
+    pub stream_url_cache:
+        std::sync::Mutex<std::collections::HashMap<u64, (tidal_api::StreamInfo, std::time::Instant)>>,
 }
 
 pub fn now_secs() -> u64 {
@@ -341,6 +349,8 @@ impl AppState {
             hw_volume: std::sync::Mutex::new(None),
             hw_volume_bus: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             app_handle: std::sync::Mutex::new(Some(app_handle)),
+            last_successful_quality: std::sync::Mutex::new(String::new()),
+            stream_url_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -926,6 +936,7 @@ pub fn run() {
             commands::stats::get_top_albums,
             commands::stats::get_listening_heatmap,
             commands::stats::get_daily_minutes,
+            commands::playback::prefetch_stream,
             // llm
             commands::llm::get_llm_settings,
             commands::llm::set_llm_settings,

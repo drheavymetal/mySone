@@ -1,10 +1,43 @@
 use serde::Deserialize;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, State};
 
 use crate::tidal_api::StreamInfo;
 use crate::AppState;
 use crate::SoneError;
+
+/// TIDAL stream URLs are signed and expire; reuse a pre-fetched URL only
+/// if it was fetched recently.
+const STREAM_URL_TTL: Duration = Duration::from_secs(60);
+
+/// Try qualities in cascade, starting from `start` if non-empty (the last
+/// known-good tier). Falls through to the lower tiers on failure. Network
+/// errors propagate immediately — no point trying lower tiers if we can't
+/// reach TIDAL at all.
+async fn fetch_stream_with_cascade(
+    client: &mut crate::tidal_api::TidalClient,
+    track_id: u64,
+    has_secret: bool,
+    start: &str,
+) -> Result<StreamInfo, SoneError> {
+    let full: &[&str] = if has_secret {
+        &["HI_RES_LOSSLESS", "HI_RES", "LOSSLESS", "HIGH"]
+    } else {
+        &["LOSSLESS", "HIGH"]
+    };
+    let start_idx = full.iter().position(|q| *q == start).unwrap_or(0);
+
+    let mut last_err: Option<SoneError> = None;
+    for q in &full[start_idx..] {
+        match client.get_stream_url(track_id, q).await {
+            Ok(info) => return Ok(info),
+            Err(e) if e.is_network() => return Err(e),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| SoneError::Audio("no quality available".into())))
+}
 
 /// Tidal-correct normalization: 0.8 * min(10^((rg + 4) / 20), 1 / peak)
 pub fn compute_norm_gain(replay_gain: Option<f64>, peak_amplitude: Option<f64>) -> f64 {
@@ -26,35 +59,39 @@ pub async fn play_tidal_track(
     track_id: u64,
     use_track_gain: bool,
 ) -> Result<StreamInfo, SoneError> {
-    // Try quality tiers from highest to lowest.
-    // Without client_secret, skip Hi-Res (those credentials typically return
-    // encrypted DASH streams that require Widevine). With a secret, the
-    // confidential PKCE credentials may return unencrypted Hi-Res BTS streams.
-    let stream_info = {
-        let mut client = state.tidal_client.lock().await;
-        let has_secret = !client.client_secret.is_empty();
-
-        if has_secret {
-            match client.get_stream_url(track_id, "HI_RES_LOSSLESS").await {
-                Ok(info) => info,
-                Err(e) if e.is_network() => return Err(e),
-                Err(_) => match client.get_stream_url(track_id, "HI_RES").await {
-                    Ok(info) => info,
-                    Err(e) if e.is_network() => return Err(e),
-                    Err(_) => match client.get_stream_url(track_id, "LOSSLESS").await {
-                        Ok(info) => info,
-                        Err(e) if e.is_network() => return Err(e),
-                        Err(_) => client.get_stream_url(track_id, "HIGH").await?,
-                    },
-                },
+    // Fast path: pre-fetched URL from background prefetch, still fresh.
+    let cached_hit = {
+        let mut cache = state.stream_url_cache.lock().expect("stream cache poisoned");
+        if let Some((info, when)) = cache.remove(&track_id) {
+            if when.elapsed() < STREAM_URL_TTL {
+                Some(info)
+            } else {
+                None
             }
         } else {
-            match client.get_stream_url(track_id, "LOSSLESS").await {
-                Ok(info) => info,
-                Err(e) if e.is_network() => return Err(e),
-                Err(_) => client.get_stream_url(track_id, "HIGH").await?,
+            None
+        }
+    };
+
+    let stream_info = if let Some(info) = cached_hit {
+        log::debug!("[play_tidal_track]: cache hit for {track_id}");
+        info
+    } else {
+        let mut client = state.tidal_client.lock().await;
+        let has_secret = !client.client_secret.is_empty();
+        let cached_quality = state
+            .last_successful_quality
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let info =
+            fetch_stream_with_cascade(&mut client, track_id, has_secret, &cached_quality).await?;
+        if let Some(ref q) = info.audio_quality {
+            if let Ok(mut g) = state.last_successful_quality.lock() {
+                *g = q.clone();
             }
         }
+        info
     };
 
     log::debug!(
@@ -336,5 +373,51 @@ pub fn update_mpris_loop_status(
     state
         .mpris
         .send(crate::mpris::MprisCommand::SetLoopStatus { mode });
+    Ok(())
+}
+
+/// Pre-fetch the stream URL for a track and store it in the cache so
+/// the next `play_tidal_track` invocation can skip the API cascade.
+/// Called by the frontend whenever it predicts the user will play a
+/// track soon (e.g. the next item in the queue while the current one
+/// is still playing). Errors are swallowed — pre-fetch is best-effort.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn prefetch_stream(
+    state: State<'_, AppState>,
+    track_id: u64,
+) -> Result<(), SoneError> {
+    // Skip if we already have a fresh entry.
+    {
+        let cache = state.stream_url_cache.lock().expect("stream cache poisoned");
+        if let Some((_, when)) = cache.get(&track_id) {
+            if when.elapsed() < STREAM_URL_TTL {
+                return Ok(());
+            }
+        }
+    }
+
+    let mut client = state.tidal_client.lock().await;
+    let has_secret = !client.client_secret.is_empty();
+    let cached_quality = state
+        .last_successful_quality
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    match fetch_stream_with_cascade(&mut client, track_id, has_secret, &cached_quality).await {
+        Ok(info) => {
+            log::debug!(
+                "[prefetch_stream] {track_id} → quality={:?}",
+                info.audio_quality
+            );
+            if let Ok(mut cache) = state.stream_url_cache.lock() {
+                // Evict stale entries opportunistically.
+                cache.retain(|_, (_, when)| when.elapsed() < STREAM_URL_TTL);
+                cache.insert(track_id, (info, Instant::now()));
+            }
+        }
+        Err(e) => {
+            log::debug!("[prefetch_stream] {track_id} skipped: {e}");
+        }
+    }
     Ok(())
 }

@@ -22,11 +22,15 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        Html, IntoResponse, Response,
+    },
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
+use std::convert::Infallible as InfallibleErr;
 use tauri::{Emitter, Manager};
 use bytes::Bytes;
 use futures_util::stream::{Stream, StreamExt};
@@ -58,6 +62,10 @@ pub struct NowPlaying {
     pub cover_url: String,
     pub duration_secs: f32,
     pub position_secs: f32,
+    /// TIDAL quality tier of the current stream — one of HI_RES_LOSSLESS,
+    /// HI_RES, LOSSLESS, HIGH; empty string when unknown.
+    #[serde(default)]
+    pub quality: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -88,11 +96,15 @@ struct AppState {
     inner: Arc<Mutex<Inner>>,
     broadcaster: ShareBroadcast,
     app_handle: tauri::AppHandle,
+    /// Broadcast tick whenever `now_state` changes — SSE handlers wake up
+    /// and resend the latest snapshot to their connected clients.
+    state_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 pub struct ShareLink {
     inner: Arc<Mutex<Inner>>,
     audio_player: AudioPlayer,
+    state_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl ShareLink {
@@ -103,10 +115,12 @@ impl ShareLink {
             now_state: ShareNowState::default(),
         }));
         let broadcaster = audio_player.share_broadcaster();
+        let (state_tx, _) = tokio::sync::broadcast::channel::<()>(16);
         let state = AppState {
             inner: Arc::clone(&inner),
             broadcaster,
             app_handle,
+            state_tx: state_tx.clone(),
         };
 
         std::thread::Builder::new()
@@ -123,15 +137,20 @@ impl ShareLink {
         Self {
             inner,
             audio_player,
+            state_tx,
         }
     }
 
     pub fn set_now_state(&self, state: ShareNowState) -> Result<(), String> {
-        let mut g = self
-            .inner
-            .lock()
-            .map_err(|e| format!("share state poisoned: {e}"))?;
-        g.now_state = state;
+        {
+            let mut g = self
+                .inner
+                .lock()
+                .map_err(|e| format!("share state poisoned: {e}"))?;
+            g.now_state = state;
+        }
+        // Wake SSE handlers; ignore Err (no subscribers is fine).
+        let _ = self.state_tx.send(());
         Ok(())
     }
 
@@ -197,6 +216,7 @@ async fn serve(state: AppState) {
         .route("/r/:token", get(landing_page))
         .route("/r/:token/stream.mp3", get(audio_stream))
         .route("/r/:token/state", get(now_state))
+        .route("/r/:token/events", get(events_sse))
         .route("/r/:token/cmd", post(cmd_handler))
         .route("/r/:token/search", get(search_handler))
         .route("/health", get(|| async { "ok" }))
@@ -286,6 +306,64 @@ async fn now_state(
         .map(|g| g.now_state.clone())
         .unwrap_or_default();
     Json(snap).into_response()
+}
+
+/// Server-Sent Events stream — pushes the current ShareNowState
+/// immediately and again on every change. Replaces the 2 s polling
+/// loop, dropping the perceived UI latency from 0-2 s to ~0.
+async fn events_sse(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Response {
+    if !token_active(&state, &token) {
+        return (StatusCode::GONE, "share link no longer active").into_response();
+    }
+
+    let inner_for_stream = Arc::clone(&state.inner);
+    let rx = state.state_tx.subscribe();
+
+    let initial_snap = state
+        .inner
+        .lock()
+        .map(|g| g.now_state.clone())
+        .unwrap_or_default();
+
+    use futures_util::stream::{self, StreamExt};
+
+    // First event = current snapshot. Subsequent events = re-snapshot on
+    // every state_tx tick. Lagged broadcasts silently skipped; closed
+    // channel ends the stream.
+    let initial = stream::once(async move {
+        let json = serde_json::to_string(&initial_snap).unwrap_or_else(|_| "{}".into());
+        Ok::<Event, InfallibleErr>(Event::default().data(json))
+    });
+    let updates = stream::unfold(
+        (rx, inner_for_stream),
+        |(mut rx, inner)| async move {
+            loop {
+                match rx.recv().await {
+                    Ok(_) => {
+                        let snap = inner
+                            .lock()
+                            .map(|g| g.now_state.clone())
+                            .unwrap_or_default();
+                        let json =
+                            serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into());
+                        return Some((
+                            Ok::<Event, InfallibleErr>(Event::default().data(json)),
+                            (rx, inner),
+                        ));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+
+    Sse::new(initial.chain(updates))
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// Accepts {action: "play"|"pause"|"toggle"|"next"|"prev"|"playTrack",
@@ -504,6 +582,14 @@ fn landing_html(token: &str) -> String {
   .meta-title  {{ font-size: 19px; font-weight: 600; line-height: 1.25; margin: 8px 0 0; }}
   .meta-artist {{ font-size: 14px; color: var(--muted); margin: 2px 0 0; }}
   .meta-album  {{ font-size: 12px; color: rgba(138,138,146,0.7); margin: 0; font-style: italic; }}
+  .quality-badge {{
+    display: none; margin-top: 6px;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(200,181,255,0.12); color: var(--accent);
+    font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    font-weight: 500;
+  }}
+  .quality-badge.show {{ display: inline-block; }}
 
   .transport {{ display: flex; align-items: center; justify-content: center; gap: 22px;
                margin-top: 18px; }}
@@ -613,6 +699,7 @@ fn landing_html(token: &str) -> String {
     <p id="title"  class="meta-title">Cargando…</p>
     <p id="artist" class="meta-artist"></p>
     <p id="album"  class="meta-album"></p>
+    <span id="quality" class="quality-badge"></span>
 
     <div class="transport">
       <button class="tbtn" data-act="prev" aria-label="Anterior">
@@ -676,10 +763,21 @@ fn landing_html(token: &str) -> String {
   var titleEl = document.getElementById('title');
   var artistEl = document.getElementById('artist');
   var albumEl = document.getElementById('album');
+  var qualityEl = document.getElementById('quality');
   var playIconEl = document.getElementById('play-icon');
   var queueListEl = document.getElementById('queue-list');
   var queueEmpty = document.getElementById('queue-empty');
   var errEl = document.getElementById('err');
+
+  function prettyQuality(q) {{
+    switch (q) {{
+      case 'HI_RES_LOSSLESS': return 'Hi-Res Lossless';
+      case 'HI_RES':          return 'MQA Hi-Res';
+      case 'LOSSLESS':        return 'Lossless';
+      case 'HIGH':            return 'High (AAC)';
+      default:                return q || '';
+    }}
+  }}
 
   var listening = false;
   var lastCover = null;
@@ -743,6 +841,8 @@ fn landing_html(token: &str) -> String {
       titleEl.textContent = 'Nada sonando';
       artistEl.textContent = '';
       albumEl.textContent = '';
+      qualityEl.classList.remove('show');
+      qualityEl.textContent = '';
       coverEl.classList.remove('has-art', 'is-playing');
       coverImg.removeAttribute('src');
       lastCover = null;
@@ -753,6 +853,13 @@ fn landing_html(token: &str) -> String {
       titleEl.textContent  = n.title || '—';
       artistEl.textContent = n.artist || '';
       albumEl.textContent  = n.album || '';
+      var q = prettyQuality(n.quality);
+      if (q) {{
+        qualityEl.textContent = q;
+        qualityEl.classList.add('show');
+      }} else {{
+        qualityEl.classList.remove('show');
+      }}
       if (n.coverUrl && n.coverUrl !== lastCover) {{
         coverImg.src = n.coverUrl;
         lastCover = n.coverUrl;
@@ -809,14 +916,44 @@ fn landing_html(token: &str) -> String {
       : '<path d="M8 5v14l11-7z"/>';
   }}
 
-  function poll() {{
-    fetch(STATE_URL, {{cache: 'no-store'}})
-      .then(function(r) {{ return r.ok ? r.json() : null; }})
-      .then(function(s) {{ if (s) renderState(s); }})
-      .catch(function() {{}});
+  // ── State stream (SSE) ──
+  // Falls back to polling if EventSource isn't available or the SSE
+  // connection drops repeatedly.
+  var pollInterval = null;
+  function startPolling() {{
+    if (pollInterval) return;
+    function poll() {{
+      fetch(STATE_URL, {{cache: 'no-store'}})
+        .then(function(r) {{ return r.ok ? r.json() : null; }})
+        .then(function(s) {{ if (s) renderState(s); }})
+        .catch(function() {{}});
+    }}
+    poll();
+    pollInterval = setInterval(poll, 2000);
   }}
-  poll();
-  setInterval(poll, 2000);
+  function stopPolling() {{
+    if (pollInterval) {{ clearInterval(pollInterval); pollInterval = null; }}
+  }}
+
+  if (typeof EventSource === 'function') {{
+    var es;
+    var sseFails = 0;
+    function openSse() {{
+      es = new EventSource('/r/' + TOKEN + '/events');
+      es.onmessage = function(ev) {{
+        try {{ renderState(JSON.parse(ev.data)); sseFails = 0; }}
+        catch (e) {{}}
+      }};
+      es.onerror = function() {{
+        // EventSource auto-reconnects; if it keeps failing, fall back to poll.
+        sseFails++;
+        if (sseFails > 4) {{ es.close(); startPolling(); }}
+      }};
+    }}
+    openSse();
+  }} else {{
+    startPolling();
+  }}
 
   // ── Search + add-to-queue ──
   var searchInput = document.getElementById('search-input');

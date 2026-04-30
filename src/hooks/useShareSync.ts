@@ -7,6 +7,7 @@ import {
   isPlayingAtom,
   queueAtom,
   manualQueueAtom,
+  streamInfoAtom,
 } from "../atoms/playback";
 import { getTidalImageUrl, getTrackDisplayTitle, type Track } from "../types";
 import { usePlaybackActions } from "./usePlaybackActions";
@@ -40,8 +41,10 @@ export function useShareSync() {
   const isPlaying = useAtomValue(isPlayingAtom);
   const queue = useAtomValue(queueAtom);
   const manualQueue = useAtomValue(manualQueueAtom);
+  const streamInfo = useAtomValue(streamInfoAtom);
   const actions = usePlaybackActions();
   const debounceRef = useRef<number | undefined>(undefined);
+  const lastPrefetchedRef = useRef<number | null>(null);
 
   // ─── Push state ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -60,6 +63,7 @@ export function useShareSync() {
               : "",
             durationSecs: track.duration ?? 0,
             positionSecs: 0,
+            quality: streamInfo?.audioQuality ?? "",
           }
         : null;
 
@@ -84,7 +88,17 @@ export function useShareSync() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [track, isPlaying, queue, manualQueue]);
+  }, [track, isPlaying, queue, manualQueue, streamInfo]);
+
+  // ─── Pre-fetch the next-in-queue stream URL ────────────────────────
+  // Saves 1-2 s on the next track-change by skipping the quality cascade.
+  useEffect(() => {
+    const upcoming = manualQueue[0] ?? queue[0];
+    if (!upcoming || !track) return;
+    if (lastPrefetchedRef.current === upcoming.id) return;
+    lastPrefetchedRef.current = upcoming.id;
+    invoke("prefetch_stream", { trackId: upcoming.id }).catch(() => {});
+  }, [track, queue, manualQueue]);
 
   // ─── Listen for remote commands ─────────────────────────────────────
   useEffect(() => {
