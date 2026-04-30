@@ -1,14 +1,37 @@
 use crate::signal_path::SignalPathTracker;
+use bytes::Bytes;
 use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use tauri::Emitter;
+use tokio::sync::broadcast;
 
 type Reply<T> = mpsc::Sender<T>;
+
+/// Shared broadcaster the GStreamer pipeline pushes Opus/Ogg bytes into.
+/// HTTP listeners (in `share_link`) subscribe via `.subscribe()` to receive
+/// a copy of each chunk. Senders ignore the "no receivers" error case so the
+/// audio thread never blocks on broadcast bookkeeping.
+pub type ShareBroadcast = Arc<broadcast::Sender<Bytes>>;
+
+/// Weak handle to the share-link encoder valve. `share_link` toggles
+/// `valve.drop` on/off when sharing starts/stops, so opusenc consumes no CPU
+/// when no one is sharing.
+#[derive(Clone)]
+pub struct ShareMonitorHandle {
+    pub valve: gst::glib::WeakRef<gst::Element>,
+}
+
+/// Shared between AudioPlayer (audio thread, on every pipeline rebuild) and
+/// `share_link` (toggles valve when sharing starts/stops).
+pub struct ShareMonitorShared {
+    pub active: bool,
+    pub handle: Option<ShareMonitorHandle>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AudioDevice {
@@ -82,6 +105,163 @@ impl PlaybackBackend {
 }
 
 // ── Helper functions ───────────────────────────────────────────────────
+
+/// Build the share-link tap branch:
+///   tee ─┬─→ main_sink (untouched, bit-perfect)
+///        └─→ queue(leaky) → valve(default drop=true) → audioconvert →
+///            audioresample → caps@48k/2ch → opusenc(256k) → oggmux →
+///            appsink(callback pushes bytes into broadcast)
+///
+/// The tee is passthrough; the leaky queue isolates the share branch so a
+/// stalled HTTP listener never back-pressures the primary audio path. The
+/// valve is closed by default — until `share_link::start_sharing` flips it,
+/// opusenc receives no buffers and consumes zero CPU.
+fn build_share_monitor(
+    broadcaster: ShareBroadcast,
+) -> Result<(gst::Element, Vec<gst::Element>, ShareMonitorHandle), String> {
+    let tee = gst::ElementFactory::make("tee")
+        .property("allow-not-linked", true)
+        .build()
+        .map_err(|e| format!("share tee: {e}"))?;
+    let queue = gst::ElementFactory::make("queue")
+        .property_from_str("leaky", "downstream")
+        .property("max-size-buffers", 50u32)
+        .property("max-size-bytes", 0u32)
+        .property("max-size-time", 0u64)
+        .build()
+        .map_err(|e| format!("share queue: {e}"))?;
+    let valve = gst::ElementFactory::make("valve")
+        .property("drop", true)
+        .build()
+        .map_err(|e| format!("share valve: {e}"))?;
+    let convert = gst::ElementFactory::make("audioconvert")
+        .build()
+        .map_err(|e| format!("share audioconvert: {e}"))?;
+    let resample = gst::ElementFactory::make("audioresample")
+        .build()
+        .map_err(|e| format!("share audioresample: {e}"))?;
+    // Force opus-friendly format: 48 kHz stereo. opusenc demands one of a
+    // small set of rates and converts whatever input rate to its sample-
+    // multiple. Pinning here keeps caps stable across track changes.
+    let caps = gst::ElementFactory::make("capsfilter")
+        .property(
+            "caps",
+            gst::Caps::builder("audio/x-raw")
+                .field("rate", 48_000i32)
+                .field("channels", 2i32)
+                .build(),
+        )
+        .build()
+        .map_err(|e| format!("share capsfilter: {e}"))?;
+    let opusenc = gst::ElementFactory::make("opusenc")
+        .property("bitrate", 256_000i32)
+        .property_from_str("bandwidth", "fullband")
+        .property("inband-fec", true)
+        .property("packet-loss-percentage", 5i32)
+        .build()
+        .map_err(|e| format!("share opusenc: {e}"))?;
+    // oggmux: standard browser-playable container for Opus.
+    let oggmux = gst::ElementFactory::make("oggmux")
+        .property("max-delay", 1_000_000_000i64)
+        .build()
+        .map_err(|e| format!("share oggmux: {e}"))?;
+
+    let appsink = gst_app::AppSink::builder()
+        .max_buffers(64)
+        .sync(false)
+        .build();
+
+    appsink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink
+                    .pull_sample()
+                    .map_err(|_| gst::FlowError::Error)?;
+                let Some(buffer) = sample.buffer() else {
+                    return Ok(gst::FlowSuccess::Ok);
+                };
+                let Ok(map) = buffer.map_readable() else {
+                    return Ok(gst::FlowSuccess::Ok);
+                };
+                let bytes = Bytes::copy_from_slice(map.as_slice());
+                // Ignore Err — broadcast::send returns Err iff there are no
+                // active receivers, which is the normal case when nobody is
+                // listening. The valve already gates encoding cost.
+                let _ = broadcaster.send(bytes);
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+
+    let handle = ShareMonitorHandle {
+        valve: valve.downgrade(),
+    };
+
+    Ok((
+        tee,
+        vec![
+            queue,
+            valve,
+            convert,
+            resample,
+            caps,
+            opusenc,
+            oggmux,
+            appsink.upcast::<gst::Element>(),
+        ],
+        handle,
+    ))
+}
+
+/// Link the tee request pads: one to the main sink (untouched), one to the
+/// monitor chain (always built but gated by the valve).
+fn link_share_tee_branches(
+    tee: &gst::Element,
+    main_sink: &gst::Element,
+    monitor_chain: &[gst::Element],
+) -> Result<(), String> {
+    let main_src = tee
+        .request_pad_simple("src_%u")
+        .ok_or("share tee: failed to request main src pad")?;
+    let main_dst = main_sink
+        .static_pad("sink")
+        .ok_or("main sink has no sink pad")?;
+    main_src
+        .link(&main_dst)
+        .map_err(|e| format!("share tee → main sink link failed: {e:?}"))?;
+
+    if monitor_chain.is_empty() {
+        return Err("monitor chain must not be empty".into());
+    }
+    let mon_src = tee
+        .request_pad_simple("src_%u")
+        .ok_or("share tee: failed to request monitor src pad")?;
+    let mon_dst = monitor_chain[0]
+        .static_pad("sink")
+        .ok_or("monitor head has no sink pad")?;
+    mon_src
+        .link(&mon_dst)
+        .map_err(|e| format!("share tee → monitor head link failed: {e:?}"))?;
+
+    let chain_refs: Vec<&gst::Element> = monitor_chain.iter().collect();
+    gst::Element::link_many(chain_refs)
+        .map_err(|e| format!("share monitor chain link failed: {e}"))?;
+
+    Ok(())
+}
+
+fn apply_share_state(handle: &Option<ShareMonitorHandle>, active: bool) {
+    let Some(h) = handle else { return };
+    let Some(valve) = h.valve.upgrade() else {
+        return;
+    };
+    valve.set_property("drop", !active);
+    log::info!(
+        "[share] valve {} (encoding {})",
+        if active { "open" } else { "closed" },
+        if active { "on" } else { "off" }
+    );
+}
 
 fn parse_pcm_format(caps: &gst::CapsRef) -> Option<PcmFormat> {
     let s = caps.structure(0)?;
@@ -935,6 +1115,10 @@ enum AudioCommand {
     ListDevices {
         reply: Reply<Result<Vec<AudioDevice>, String>>,
     },
+    SetShareActive {
+        active: bool,
+        reply: Reply<Result<(), String>>,
+    },
 }
 
 // ── AudioPlayer (public API unchanged) ─────────────────────────────────
@@ -942,11 +1126,26 @@ enum AudioCommand {
 #[derive(Clone)]
 pub struct AudioPlayer {
     cmd_tx: mpsc::Sender<AudioCommand>,
+    /// Held for cloning into the audio thread; the thread mutates it via
+    /// `share_state_thread`. Not used directly by the public API today.
+    #[allow(dead_code)]
+    share_state: Arc<Mutex<ShareMonitorShared>>,
+    share_broadcaster: ShareBroadcast,
 }
 
 impl AudioPlayer {
-    pub fn new(app_handle: tauri::AppHandle, signal_path: Arc<SignalPathTracker>) -> Self {
+    pub fn new(
+        app_handle: tauri::AppHandle,
+        signal_path: Arc<SignalPathTracker>,
+        share_broadcaster: ShareBroadcast,
+    ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCommand>();
+        let share_state = Arc::new(Mutex::new(ShareMonitorShared {
+            active: false,
+            handle: None,
+        }));
+        let share_state_thread = Arc::clone(&share_state);
+        let share_broadcaster_thread = Arc::clone(&share_broadcaster);
 
         std::thread::spawn(move || {
             // GStreamer plugin path setup
@@ -1129,7 +1328,7 @@ impl AudioPlayer {
                                     let fmt_for_pipeline = writer_fmt.as_ref().unwrap_or(&default_fmt);
                                     let supported_fmts_for_pipeline = writer_supported_fmts.as_deref().unwrap_or(&["S32LE"]);
                                     let supported_rates_for_pipeline = writer_supported_rates.as_deref().unwrap_or(&[44100, 48000]);
-                                    let (pipe, u_vol, n_vol) = build_appsink_pipeline(
+                                    let (pipe, u_vol, n_vol, share_handle) = build_appsink_pipeline(
                                         &uri,
                                         exclusive,
                                         bit_perfect,
@@ -1138,7 +1337,15 @@ impl AudioPlayer {
                                         fmt_for_pipeline,
                                         supported_fmts_for_pipeline,
                                         supported_rates_for_pipeline,
+                                        Arc::clone(&share_broadcaster_thread),
                                     )?;
+                                    {
+                                        let mut s = share_state_thread
+                                            .lock()
+                                            .expect("share_state mutex poisoned");
+                                        s.handle = Some(share_handle);
+                                        apply_share_state(&s.handle, s.active);
+                                    }
 
                                     // Start pipeline directly — errors come via bus watcher
                                     pipe.set_state(gst::State::Playing)
@@ -1259,24 +1466,37 @@ impl AudioPlayer {
                                 let sink = gst::ElementFactory::make("autoaudiosink")
                                     .build()
                                     .map_err(|e| format!("Failed to create autoaudiosink: {e}"))?;
+                                let (tee, mon_chain, share_handle) =
+                                    build_share_monitor(Arc::clone(&share_broadcaster_thread))?;
 
-                                pipe.add_many([
+                                let mut all_elems: Vec<&gst::Element> = vec![
                                     &uridecodebin,
                                     &audioconvert,
                                     &audioresample,
                                     &norm_vol,
                                     &user_vol,
+                                    &tee,
                                     &sink,
-                                ])
-                                .map_err(|e| format!("Failed to add elements: {e}"))?;
+                                ];
+                                all_elems.extend(mon_chain.iter());
+                                pipe.add_many(all_elems)
+                                    .map_err(|e| format!("Failed to add elements: {e}"))?;
                                 gst::Element::link_many([
                                     &audioconvert,
                                     &audioresample,
                                     &norm_vol,
                                     &user_vol,
-                                    &sink,
+                                    &tee,
                                 ])
                                 .map_err(|e| format!("Failed to link chain: {e}"))?;
+                                link_share_tee_branches(&tee, &sink, &mon_chain)?;
+                                {
+                                    let mut s = share_state_thread
+                                        .lock()
+                                        .expect("share_state mutex poisoned");
+                                    s.handle = Some(share_handle);
+                                    apply_share_state(&s.handle, s.active);
+                                }
 
                                 let convert_weak = audioconvert.downgrade();
                                 uridecodebin.connect_pad_added(move |_src, src_pad| {
@@ -1588,11 +1808,27 @@ impl AudioPlayer {
                         let result = list_alsa_devices_inner();
                         reply.send(result).ok();
                     }
+                    AudioCommand::SetShareActive { active, reply } => {
+                        let mut s = share_state_thread
+                            .lock()
+                            .expect("share_state mutex poisoned");
+                        s.active = active;
+                        apply_share_state(&s.handle, s.active);
+                        // Suppress unused warning when build_share_monitor hasn't
+                        // run yet (no track played). The next pipeline build
+                        // will pick up `s.active` and apply correctly.
+                        let _ = &share_broadcaster_thread;
+                        reply.send(Ok(())).ok();
+                    }
                 }
             }
         });
 
-        Self { cmd_tx }
+        Self {
+            cmd_tx,
+            share_state,
+            share_broadcaster,
+        }
     }
 
     fn send_cmd<T>(&self, build: impl FnOnce(Reply<T>) -> AudioCommand) -> T {
@@ -1648,6 +1884,12 @@ impl AudioPlayer {
     pub fn list_devices(&self) -> Result<Vec<AudioDevice>, String> {
         self.send_cmd(|reply| AudioCommand::ListDevices { reply })
     }
+    pub fn set_share_active(&self, active: bool) -> Result<(), String> {
+        self.send_cmd(|reply| AudioCommand::SetShareActive { active, reply })
+    }
+    pub fn share_broadcaster(&self) -> ShareBroadcast {
+        Arc::clone(&self.share_broadcaster)
+    }
 }
 
 // ── Appsink pipeline builder ───────────────────────────────────────────
@@ -1662,7 +1904,16 @@ fn build_appsink_pipeline(
     negotiated_fmt: &PcmFormat,
     supported_gst_formats: &[&str],
     supported_rates: &[u32],
-) -> Result<(gst::Pipeline, Option<gst::Element>, Option<gst::Element>), String> {
+    share_broadcaster: ShareBroadcast,
+) -> Result<
+    (
+        gst::Pipeline,
+        Option<gst::Element>,
+        Option<gst::Element>,
+        ShareMonitorHandle,
+    ),
+    String,
+> {
     use gst_app::prelude::*;
 
     let pipe = gst::Pipeline::new();
@@ -1709,6 +1960,7 @@ fn build_appsink_pipeline(
         "[audio] building appsink pipeline: exclusive={exclusive} bit_perfect={bit_perfect}"
     );
 
+    let share_handle: ShareMonitorHandle;
     let (u_vol, n_vol) = if bit_perfect {
         audioconvert.set_property_from_str("dithering", "none");
         audioconvert.set_property_from_str("noise-shaping", "none");
@@ -1716,24 +1968,36 @@ fn build_appsink_pipeline(
         if is_dash {
             // DASH: no capsfilter — appsink caps constrain format,
             // audioconvert passes through rate changes
-            pipe.add_many([&uridecodebin, &audioconvert, appsink.upcast_ref()])
+            let (tee, mon_chain, sh) = build_share_monitor(Arc::clone(&share_broadcaster))?;
+            let mut elems: Vec<&gst::Element> =
+                vec![&uridecodebin, &audioconvert, &tee, appsink.upcast_ref()];
+            elems.extend(mon_chain.iter());
+            pipe.add_many(elems)
                 .map_err(|e| format!("Failed to add elements: {e}"))?;
-            gst::Element::link_many([&audioconvert, appsink.upcast_ref()])
+            gst::Element::link_many([&audioconvert, &tee])
                 .map_err(|e| format!("Failed to link bit-perfect DASH chain: {e}"))?;
+            link_share_tee_branches(&tee, appsink.upcast_ref(), &mon_chain)?;
+            share_handle = sh;
         } else {
             // BTS: capsfilter for dynamic locking (preserves exact decoded format)
             let capsfilter = gst::ElementFactory::make("capsfilter")
                 .build()
                 .map_err(|e| format!("Failed to create capsfilter: {e}"))?;
-            pipe.add_many([
+            let (tee, mon_chain, sh) = build_share_monitor(Arc::clone(&share_broadcaster))?;
+            let mut elems: Vec<&gst::Element> = vec![
                 &uridecodebin,
                 &audioconvert,
                 &capsfilter,
+                &tee,
                 appsink.upcast_ref(),
-            ])
-            .map_err(|e| format!("Failed to add elements: {e}"))?;
-            gst::Element::link_many([&audioconvert, &capsfilter, appsink.upcast_ref()])
+            ];
+            elems.extend(mon_chain.iter());
+            pipe.add_many(elems)
+                .map_err(|e| format!("Failed to add elements: {e}"))?;
+            gst::Element::link_many([&audioconvert, &capsfilter, &tee])
                 .map_err(|e| format!("Failed to link bit-perfect chain: {e}"))?;
+            link_share_tee_branches(&tee, appsink.upcast_ref(), &mon_chain)?;
+            share_handle = sh;
         }
 
         (None, None)
@@ -1755,22 +2019,23 @@ fn build_appsink_pipeline(
             )
             .build()
             .map_err(|e| format!("Failed to create capsfilter: {e}"))?;
+        let (tee, mon_chain, sh) = build_share_monitor(Arc::clone(&share_broadcaster))?;
 
-        pipe.add_many([
+        let mut elems: Vec<&gst::Element> = vec![
             &uridecodebin,
             &audioconvert,
             &audioresample,
             &capsfilter,
+            &tee,
             appsink.upcast_ref(),
-        ])
-        .map_err(|e| format!("Failed to add elements: {e}"))?;
-        gst::Element::link_many([
-            &audioconvert,
-            &audioresample,
-            &capsfilter,
-            appsink.upcast_ref(),
-        ])
-        .map_err(|e| format!("Failed to link exclusive chain: {e}"))?;
+        ];
+        elems.extend(mon_chain.iter());
+        pipe.add_many(elems)
+            .map_err(|e| format!("Failed to add elements: {e}"))?;
+        gst::Element::link_many([&audioconvert, &audioresample, &capsfilter, &tee])
+            .map_err(|e| format!("Failed to link exclusive chain: {e}"))?;
+        link_share_tee_branches(&tee, appsink.upcast_ref(), &mon_chain)?;
+        share_handle = sh;
 
         (None, None)
     };
@@ -1949,7 +2214,7 @@ fn build_appsink_pipeline(
             .build(),
     );
 
-    Ok((pipe, u_vol, n_vol))
+    Ok((pipe, u_vol, n_vol, share_handle))
 }
 
 // ── Device enumeration ─────────────────────────────────────────────────

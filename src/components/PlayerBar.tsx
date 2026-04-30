@@ -45,6 +45,7 @@ import LyricsPanel from "./LyricsPanel";
 import LivePaintingMode from "./LivePaintingMode";
 import LibraryGalaxy from "./LibraryGalaxy";
 import QueueChatPanel from "./QueueChatPanel";
+import ShareLinkButton from "./ShareLinkButton";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -519,6 +520,7 @@ export default function PlayerBar() {
         >
           <Orbit size={18} />
         </button>
+        <ShareLinkButton />
         <DrawerButtons />
         <MiniPlayerButton />
         <MaximizeButton />

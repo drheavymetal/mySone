@@ -15,6 +15,7 @@ mod llm;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod scrobble;
+mod share_link;
 mod signal_path;
 mod stats;
 #[cfg(target_os = "linux")]
@@ -150,6 +151,7 @@ impl Default for Settings {
 pub struct AppState {
     pub audio_player: AudioPlayer,
     pub llm_settings: Mutex<llm::LLMSettings>,
+    pub share_link: Arc<share_link::ShareLink>,
     pub tidal_client: Mutex<TidalClient>,
     pub settings_path: PathBuf,
     pub cache_dir: PathBuf,
@@ -291,9 +293,26 @@ impl AppState {
             .map(|s| s.llm.clone())
             .unwrap_or_default();
 
+        // Shared broadcast channel: audio thread pushes Opus/Ogg pages,
+        // share-link HTTP listeners subscribe. Capacity sized for ~6 s of
+        // audio at 256 kbps (~24 KB/s of Ogg pages, multiple pages per buffer
+        // depending on muxer flush behavior). 256 buffers is generous; older
+        // pages drop if a listener is too slow (handled gracefully).
+        let share_broadcaster: audio::ShareBroadcast = {
+            let (tx, _) = tokio::sync::broadcast::channel(256);
+            Arc::new(tx)
+        };
+        let audio_player = AudioPlayer::new(
+            app_handle.clone(),
+            Arc::clone(&signal_path),
+            Arc::clone(&share_broadcaster),
+        );
+        let share_link = Arc::new(share_link::ShareLink::new(audio_player.clone()));
+
         Self {
-            audio_player: AudioPlayer::new(app_handle.clone(), Arc::clone(&signal_path)),
+            audio_player,
             llm_settings: Mutex::new(llm_settings_initial),
+            share_link,
             tidal_client: Mutex::new(TidalClient::new(&proxy_settings)),
             settings_path,
             cache_dir,
@@ -909,6 +928,10 @@ pub fn run() {
             commands::llm::set_llm_settings,
             commands::llm::llm_chat,
             commands::llm::llm_ping,
+            // share link
+            commands::share::share_start,
+            commands::share::share_stop,
+            commands::share::share_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
