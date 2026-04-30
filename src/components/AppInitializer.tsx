@@ -63,6 +63,7 @@ import { proxySettingsAtom, type ProxySettings } from "../atoms/proxy";
 // Stable action callbacks (no atom subscriptions)
 import { usePlaybackActions } from "../hooks/usePlaybackActions";
 import { useFavorites } from "../hooks/useFavorites";
+import { useShareSync } from "../hooks/useShareSync";
 import { useToast } from "../contexts/ToastContext";
 import {
   checkNetworkError,
@@ -163,6 +164,9 @@ export function AppInitializer() {
     usePlaybackActions();
   const { addFavoriteTrack, removeFavoriteTrack, favoriteTrackIds } =
     useFavorites();
+  // Pushes now-playing/queue/play-state to the share-link backend and
+  // listens for transport commands from remote listeners.
+  useShareSync();
   const setDrawerOpen = useSetAtom(drawerOpenAtom);
   const { showToast } = useToast();
 

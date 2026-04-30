@@ -307,7 +307,10 @@ impl AppState {
             Arc::clone(&signal_path),
             Arc::clone(&share_broadcaster),
         );
-        let share_link = Arc::new(share_link::ShareLink::new(audio_player.clone()));
+        let share_link = Arc::new(share_link::ShareLink::new(
+            audio_player.clone(),
+            app_handle.clone(),
+        ));
 
         Self {
             audio_player,
@@ -932,6 +935,7 @@ pub fn run() {
             commands::share::share_start,
             commands::share::share_stop,
             commands::share::share_status,
+            commands::share::share_set_state,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
