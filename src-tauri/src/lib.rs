@@ -1,5 +1,6 @@
 mod audio;
 pub mod cache;
+pub mod cli;
 mod commands;
 mod crypto;
 mod discord;
@@ -7,6 +8,7 @@ mod embedded_config;
 mod embedded_lastfm;
 mod embedded_librefm;
 mod error;
+mod hooks;
 mod idle_inhibit;
 #[cfg(target_os = "linux")]
 mod mpris;
@@ -164,6 +166,7 @@ pub struct AppState {
     pub discord: discord::DiscordHandle,
     pub idle_inhibitor: Mutex<idle_inhibit::IdleInhibitor>,
     pub signal_path: Arc<SignalPathTracker>,
+    pub hooks: Arc<hooks::HooksManager>,
 }
 
 pub fn now_secs() -> u64 {
@@ -278,6 +281,7 @@ impl AppState {
             discord: discord_handle,
             idle_inhibitor: Mutex::new(idle_inhibit::IdleInhibitor::new()),
             signal_path,
+            hooks: Arc::new(hooks::HooksManager::new(&config_dir)),
         }
     }
 

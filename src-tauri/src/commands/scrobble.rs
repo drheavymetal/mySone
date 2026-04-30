@@ -51,18 +51,21 @@ pub async fn notify_track_started(
         track_id: payload.track_id,
         recording_mbid: None,
     };
+    state.hooks.on_track_started(&track);
     state.scrobble_manager.on_track_started(track).await;
     Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_paused(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.hooks.on_pause();
     state.scrobble_manager.on_pause().await;
     Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_resumed(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.hooks.on_resume();
     state.scrobble_manager.on_resume().await;
     Ok(())
 }
@@ -75,6 +78,7 @@ pub async fn notify_track_seeked(state: State<'_, AppState>) -> Result<(), SoneE
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn notify_track_stopped(state: State<'_, AppState>) -> Result<(), SoneError> {
+    state.hooks.on_stop();
     state.scrobble_manager.on_track_stopped().await;
     Ok(())
 }
