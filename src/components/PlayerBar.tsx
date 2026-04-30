@@ -12,6 +12,7 @@ import {
   Maximize2,
   MoreHorizontal,
   PictureInPicture2,
+  Frame,
 } from "lucide-react";
 import { getTidalImageUrl, getTrackDisplayTitle } from "../types";
 import ExplicitBadge from "./ExplicitBadge";
@@ -39,6 +40,7 @@ import { TrackArtists } from "./TrackArtists";
 import QualityBadge from "./QualityBadge";
 import SignalPathPanel from "./SignalPathPanel";
 import LyricsPanel from "./LyricsPanel";
+import LivePaintingMode from "./LivePaintingMode";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -466,6 +468,7 @@ export default function PlayerBar() {
   const maximized = useAtomValue(maximizedPlayerAtom);
   const [signalPathOpen, setSignalPathOpen] = useState(false);
   const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [livePaintingOpen, setLivePaintingOpen] = useState(false);
 
   return (
     <div className={`player-bar h-[90px] bg-th-elevated border-t border-th-border-subtle px-4 flex items-center justify-between relative z-50 select-none ${maximized ? "invisible" : ""}`}>
@@ -489,6 +492,13 @@ export default function PlayerBar() {
         >
           <Mic2 size={18} />
         </button>
+        <button
+          onClick={() => setLivePaintingOpen(true)}
+          title="Modo cuadro vivo"
+          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
+        >
+          <Frame size={18} />
+        </button>
         <DrawerButtons />
         <MiniPlayerButton />
         <MaximizeButton />
@@ -496,6 +506,7 @@ export default function PlayerBar() {
 
       <SignalPathPanel open={signalPathOpen} onClose={() => setSignalPathOpen(false)} />
       <LyricsPanel open={lyricsOpen} onClose={() => setLyricsOpen(false)} />
+      <LivePaintingMode open={livePaintingOpen} onClose={() => setLivePaintingOpen(false)} />
     </div>
   );
 }
