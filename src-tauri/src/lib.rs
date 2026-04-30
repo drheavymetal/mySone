@@ -11,11 +11,13 @@ mod idle_inhibit;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod scrobble;
+mod signal_path;
 #[cfg(target_os = "linux")]
 mod tray;
 mod tidal_api;
 
 pub use error::SoneError;
+pub use signal_path::{SignalPath, SignalPathTracker};
 
 use audio::{AudioDevice, AudioPlayer};
 use cache::DiskCache;
@@ -161,6 +163,7 @@ pub struct AppState {
     pub scrobble_manager: scrobble::ScrobbleManager,
     pub discord: discord::DiscordHandle,
     pub idle_inhibitor: Mutex<idle_inhibit::IdleInhibitor>,
+    pub signal_path: Arc<SignalPathTracker>,
 }
 
 pub fn now_secs() -> u64 {
@@ -249,8 +252,12 @@ impl AppState {
             discord_handle.send(discord::DiscordCommand::Connect);
         }
 
+        let signal_path = Arc::new(SignalPathTracker::new(app_handle.clone()));
+        signal_path.set_audio_modes(exclusive_mode, bit_perfect);
+        signal_path.set_normalization_enabled(volume_normalization);
+
         Self {
-            audio_player: AudioPlayer::new(app_handle.clone()),
+            audio_player: AudioPlayer::new(app_handle.clone(), Arc::clone(&signal_path)),
             tidal_client: Mutex::new(TidalClient::new(&proxy_settings)),
             settings_path,
             cache_dir,
@@ -270,6 +277,7 @@ impl AppState {
             scrobble_manager,
             discord: discord_handle,
             idle_inhibitor: Mutex::new(idle_inhibit::IdleInhibitor::new()),
+            signal_path,
         }
     }
 
@@ -729,6 +737,7 @@ pub fn run() {
             commands::utility::test_proxy_connection,
             commands::utility::inhibit_idle,
             commands::utility::uninhibit_idle,
+            commands::utility::get_signal_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
