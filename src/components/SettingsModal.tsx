@@ -47,6 +47,7 @@ function ExplicitContentToggle() {
         onClick={() => {
           setAllowExplicit(!allowExplicit);
           invoke("stop_track").catch(() => {});
+          invoke("notify_track_stopped").catch(() => {});
           store.set(currentTrackAtom, null);
           store.set(isPlayingAtom, false);
           store.set(queueAtom, []);

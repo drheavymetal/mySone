@@ -811,6 +811,7 @@ export function AppInitializer() {
     });
     const unlistenMprisStop = listen("mpris:stop", () => {
       invoke("stop_track").catch(() => {});
+      invoke("notify_track_stopped").catch(() => {});
       store.set(isPlayingAtom, false);
     });
     return () => {

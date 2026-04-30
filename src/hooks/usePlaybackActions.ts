@@ -208,6 +208,7 @@ export function usePlaybackActions() {
     try {
       await invoke("pause_track");
       store.set(isPlayingAtom, false);
+      invoke("notify_track_paused").catch(() => {});
     } catch (error) {
       console.error("Failed to pause track:", error);
     }
@@ -246,6 +247,7 @@ export function usePlaybackActions() {
         }).catch(() => {});
       } else {
         await invoke("resume_track");
+        invoke("notify_track_resumed").catch(() => {});
       }
       store.set(isPlayingAtom, true);
     } catch (error) {
@@ -279,6 +281,7 @@ export function usePlaybackActions() {
     try {
       await invoke("seek_track", { positionSecs });
       notifySeek(positionSecs);
+      invoke("notify_track_seeked").catch(() => {});
     } catch (error) {
       console.error("Failed to seek:", error);
     }

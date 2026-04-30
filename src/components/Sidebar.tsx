@@ -6,7 +6,7 @@ import {
   Music,
   User,
   FolderOpen,
-  BarChart3,
+  Activity,
 } from "lucide-react";
 import SortDropdown from "./SortDropdown";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
@@ -405,7 +405,7 @@ export default function Sidebar() {
           } ${isCollapsed ? "justify-center px-0" : ""}`}
           title="Stats"
         >
-          <BarChart3 size={20} strokeWidth={2} />
+          <Activity size={20} strokeWidth={2} />
           {!isCollapsed && <span className="font-semibold text-sm">Stats</span>}
         </button>
       </nav>
