@@ -12,7 +12,14 @@ import { getTidalImageUrl, getTrackDisplayTitle, type Track } from "../types";
 import { usePlaybackActions } from "./usePlaybackActions";
 
 interface ShareCmdEvent {
-  action: "play" | "pause" | "toggle" | "next" | "prev" | "playTrack";
+  action:
+    | "play"
+    | "pause"
+    | "toggle"
+    | "next"
+    | "prev"
+    | "playTrack"
+    | "addToQueue";
   trackId?: number | null;
 }
 
@@ -107,6 +114,14 @@ export function useShareSync() {
             const all: Track[] = [...manualQueue, ...queue];
             const target = all.find((t) => t.id === p.trackId);
             if (target) await actions.playTrack(target, { chosenByUser: true });
+            break;
+          }
+          case "addToQueue": {
+            if (!p.trackId) return;
+            const fetched = (await invoke("get_track", {
+              trackId: p.trackId,
+            })) as Track;
+            if (fetched && fetched.id) actions.addToQueue(fetched);
             break;
           }
         }

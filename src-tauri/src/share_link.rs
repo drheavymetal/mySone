@@ -20,14 +20,14 @@
 use crate::audio::{AudioPlayer, ShareBroadcast};
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use bytes::Bytes;
 use futures_util::stream::{Stream, StreamExt};
 use serde::Serialize;
@@ -198,6 +198,7 @@ async fn serve(state: AppState) {
         .route("/r/:token/stream.mp3", get(audio_stream))
         .route("/r/:token/state", get(now_state))
         .route("/r/:token/cmd", post(cmd_handler))
+        .route("/r/:token/search", get(search_handler))
         .route("/health", get(|| async { "ok" }))
         .with_state(state);
 
@@ -303,7 +304,7 @@ async fn cmd_handler(
     let action = payload.action.as_str();
     if !matches!(
         action,
-        "play" | "pause" | "toggle" | "next" | "prev" | "playTrack"
+        "play" | "pause" | "toggle" | "next" | "prev" | "playTrack" | "addToQueue"
     ) {
         return (StatusCode::BAD_REQUEST, "unknown action").into_response();
     }
@@ -317,6 +318,96 @@ async fn cmd_handler(
     }
     log::info!("[share] cmd {action} (track={:?})", payload.track_id);
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchTrackHit {
+    track_id: u64,
+    title: String,
+    artist: String,
+    cover_url: String,
+}
+
+#[derive(Serialize, Default)]
+struct SearchResp {
+    tracks: Vec<SearchTrackHit>,
+}
+
+/// Build the standard TIDAL image URL the frontend uses elsewhere.
+/// `cover` is the dashed UUID returned by TIDAL; size is one of the
+/// supported sizes (160, 320, 640, 1280, etc.).
+fn tidal_cover_url(cover: &str, size: u32) -> String {
+    format!(
+        "https://resources.tidal.com/images/{}/{size}x{size}.jpg",
+        cover.replace('-', "/"),
+        size = size,
+    )
+}
+
+async fn search_handler(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Query(params): Query<SearchQuery>,
+) -> Response {
+    if !token_active(&state, &token) {
+        return (StatusCode::GONE, "share link no longer active").into_response();
+    }
+    let q = params.q.trim();
+    if q.is_empty() {
+        return Json(SearchResp::default()).into_response();
+    }
+    let limit = params.limit.unwrap_or(15).clamp(1, 30);
+
+    let app_state = state.app_handle.state::<crate::AppState>();
+    let mut client = app_state.tidal_client.lock().await;
+    match client.search(q, limit).await {
+        Ok(results) => {
+            let tracks: Vec<SearchTrackHit> = results
+                .tracks
+                .into_iter()
+                .take(limit as usize)
+                .map(|t| {
+                    let artist = t
+                        .artists
+                        .as_ref()
+                        .filter(|a| !a.is_empty())
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| x.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .or_else(|| t.artist.as_ref().map(|a| a.name.clone()))
+                        .unwrap_or_default();
+                    let cover_url = t
+                        .album
+                        .as_ref()
+                        .and_then(|a| a.cover.as_ref())
+                        .map(|c| tidal_cover_url(c, 160))
+                        .unwrap_or_default();
+                    SearchTrackHit {
+                        track_id: t.id,
+                        title: t.title,
+                        artist,
+                        cover_url,
+                    }
+                })
+                .collect();
+            Json(SearchResp { tracks }).into_response()
+        }
+        Err(e) => {
+            log::warn!("[share] search failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
 }
 
 /// Streams MP3 frames from the broadcast channel until the listener
@@ -449,6 +540,36 @@ fn landing_html(token: &str) -> String {
   .listen-btn.muted {{ background: rgba(255,255,255,0.1); color: var(--fg); }}
   .listen-btn:active {{ filter: brightness(0.9); }}
 
+  .add-section {{ margin-top: 28px; }}
+  .add-section h2 {{ font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+                    color: var(--muted); margin: 0 0 10px; }}
+  .search-row {{ display: flex; gap: 8px; }}
+  .search-input {{
+    flex: 1; min-width: 0;
+    background: var(--card); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 10px 12px; font-size: 14px;
+    color: var(--fg); outline: none;
+    transition: border-color 0.15s ease;
+  }}
+  .search-input:focus {{ border-color: rgba(200,181,255,0.4); }}
+  .search-results {{ margin-top: 8px; background: var(--card); border-radius: 10px;
+                    overflow: hidden; }}
+  .search-results .hit {{ display: flex; gap: 10px; align-items: center;
+                         padding: 8px 10px; cursor: pointer;
+                         border-top: 1px solid rgba(255,255,255,0.05);
+                         transition: background 0.12s ease; }}
+  .search-results .hit:first-child {{ border-top: 0; }}
+  .search-results .hit:hover {{ background: rgba(200,181,255,0.06); }}
+  .search-results .hit img {{ width: 36px; height: 36px; border-radius: 6px; object-fit: cover;
+                             background: rgba(255,255,255,0.05); flex-shrink: 0; }}
+  .search-results .hit .meta {{ min-width: 0; flex: 1; }}
+  .search-results .hit .t {{ font-size: 13px; line-height: 1.25; white-space: nowrap;
+                            overflow: hidden; text-overflow: ellipsis; }}
+  .search-results .hit .a {{ font-size: 11px; color: var(--muted); white-space: nowrap;
+                            overflow: hidden; text-overflow: ellipsis; }}
+  .search-results .added {{ font-size: 11px; color: var(--accent); padding: 0 8px; }}
+  .search-status {{ font-size: 11px; color: var(--muted); padding: 8px 10px; }}
+
   .queue {{ margin-top: 28px; }}
   .queue h2 {{ font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
               color: var(--muted); margin: 0 0 10px; }}
@@ -518,6 +639,16 @@ fn landing_html(token: &str) -> String {
     </div>
     <button id="listen-btn" class="listen-btn">PLAY</button>
   </div>
+
+  <section class="add-section">
+    <h2>Añadir a la cola</h2>
+    <div class="search-row">
+      <input id="search-input" class="search-input" type="search"
+             placeholder="Busca artista, pista o álbum…" autocomplete="off"
+             enterkeyhint="search" inputmode="search" />
+    </div>
+    <div id="search-results" class="search-results" style="display:none"></div>
+  </section>
 
   <section class="queue">
     <h2>A continuación</h2>
@@ -686,6 +817,74 @@ fn landing_html(token: &str) -> String {
   }}
   poll();
   setInterval(poll, 2000);
+
+  // ── Search + add-to-queue ──
+  var searchInput = document.getElementById('search-input');
+  var searchResults = document.getElementById('search-results');
+  var searchTimer = null;
+  var searchSeq = 0;
+
+  function runSearch(q) {{
+    var seq = ++searchSeq;
+    if (!q) {{
+      searchResults.style.display = 'none';
+      searchResults.innerHTML = '';
+      return;
+    }}
+    searchResults.style.display = 'block';
+    searchResults.innerHTML = '<div class="search-status">Buscando…</div>';
+    fetch('/r/' + TOKEN + '/search?q=' + encodeURIComponent(q) + '&limit=12',
+          {{cache: 'no-store'}})
+      .then(function(r) {{ return r.ok ? r.json() : null; }})
+      .then(function(data) {{
+        if (seq !== searchSeq) return;
+        if (!data || !data.tracks || data.tracks.length === 0) {{
+          searchResults.innerHTML = '<div class="search-status">Sin resultados</div>';
+          return;
+        }}
+        searchResults.innerHTML = '';
+        data.tracks.forEach(function(t) {{
+          var row = document.createElement('div');
+          row.className = 'hit';
+          var img = document.createElement('img');
+          if (t.coverUrl) img.src = t.coverUrl;
+          var meta = document.createElement('div');
+          meta.className = 'meta';
+          var tt = document.createElement('div');
+          tt.className = 't';
+          tt.textContent = t.title || '—';
+          var ta = document.createElement('div');
+          ta.className = 'a';
+          ta.textContent = t.artist || '';
+          meta.appendChild(tt); meta.appendChild(ta);
+          var added = document.createElement('span');
+          added.className = 'added';
+          added.style.display = 'none';
+          added.textContent = 'añadido';
+          row.appendChild(img); row.appendChild(meta); row.appendChild(added);
+          row.addEventListener('click', function() {{
+            sendCmd('addToQueue', t.trackId);
+            added.style.display = 'inline';
+            row.style.pointerEvents = 'none';
+            row.style.opacity = '0.55';
+          }});
+          searchResults.appendChild(row);
+        }});
+      }})
+      .catch(function() {{
+        if (seq !== searchSeq) return;
+        searchResults.innerHTML = '<div class="search-status">Error de búsqueda</div>';
+      }});
+  }}
+
+  searchInput.addEventListener('input', function() {{
+    if (searchTimer) clearTimeout(searchTimer);
+    var q = searchInput.value.trim();
+    searchTimer = setTimeout(function() {{ runSearch(q); }}, 280);
+  }});
+  searchInput.addEventListener('focus', function() {{
+    if (searchInput.value.trim()) runSearch(searchInput.value.trim());
+  }});
 
   // Best-effort silent autoplay on load (mobile usually blocks; user taps PLAY).
   window.addEventListener('load', function() {{
