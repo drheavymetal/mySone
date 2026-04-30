@@ -38,6 +38,7 @@ import { useMiniplayerWindow } from "../hooks/useMiniplayerWindow";
 import { TrackArtists } from "./TrackArtists";
 import QualityBadge from "./QualityBadge";
 import SignalPathPanel from "./SignalPathPanel";
+import ShareLinkButton from "./ShareLinkButton";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
 
@@ -480,6 +481,7 @@ export default function PlayerBar() {
       {/* Right: Volume & Extras */}
       <div className="flex items-center justify-end gap-4 w-[30%] min-w-[180px]">
         <QualityBadge onClick={() => setSignalPathOpen(true)} />
+        <ShareLinkButton />
         <DrawerButtons />
         <MiniPlayerButton />
         <MaximizeButton />
