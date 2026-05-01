@@ -120,6 +120,35 @@ textarea {
   animation: fadeIn 0.2s ease-out both;
 }
 
+@keyframes statsFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stats-fade-in {
+  animation: statsFadeIn 0.28s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.stats-fade-in > * {
+  animation: statsFadeIn 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.stats-fade-in > *:nth-child(2) {
+  animation-delay: 0.05s;
+}
+.stats-fade-in > *:nth-child(3) {
+  animation-delay: 0.1s;
+}
+.stats-fade-in > *:nth-child(4) {
+  animation-delay: 0.15s;
+}
+
 /* GPU-accelerated "playing" bars animation */
 @keyframes barBounce {
   0%,
