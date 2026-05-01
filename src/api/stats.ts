@@ -114,3 +114,51 @@ export async function importListenBrainzHistory(
     sinceUnix: sinceUnix ?? null,
   });
 }
+
+// ─── Remote stats sources (ListenBrainz + Last.fm) ────────────────────────
+
+export type StatsSource = "local" | "listenbrainz" | "lastfm";
+
+/** Top tracks from ListenBrainz for the connected user. */
+export async function getListenBrainzTopTracks(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopTrack[]> {
+  return invoke<TopTrack[]>("get_listenbrainz_top_tracks", { window, limit });
+}
+
+export async function getListenBrainzTopArtists(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopArtist[]> {
+  return invoke<TopArtist[]>("get_listenbrainz_top_artists", { window, limit });
+}
+
+export async function getListenBrainzTopAlbums(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopAlbum[]> {
+  return invoke<TopAlbum[]>("get_listenbrainz_top_albums", { window, limit });
+}
+
+/** Top tracks from Last.fm for the connected user. */
+export async function getLastfmUserTopTracks(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopTrack[]> {
+  return invoke<TopTrack[]>("get_lastfm_user_top_tracks", { window, limit });
+}
+
+export async function getLastfmUserTopArtists(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopArtist[]> {
+  return invoke<TopArtist[]>("get_lastfm_user_top_artists", { window, limit });
+}
+
+export async function getLastfmUserTopAlbums(
+  window: StatsWindow,
+  limit: number,
+): Promise<TopAlbum[]> {
+  return invoke<TopAlbum[]>("get_lastfm_user_top_albums", { window, limit });
+}

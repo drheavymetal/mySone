@@ -425,6 +425,60 @@ localStorage.removeItem("sone:lastfm-cache:v1")
 
 ---
 
+## 18. Stats source toggle — Local / ListenBrainz / Last.fm
+
+**What it is.** A second pill row in the Stats header lets you pivot
+the **Top Tracks / Top Artists / Top Albums** tabs between three data
+sources:
+
+* **Local** — your own SQLite DB (default).
+* **ListenBrainz** — pulled live from your LB profile via
+  `/1/stats/user/{user}/top-recordings|top-artists|release-groups`.
+* **Last.fm** — pulled live via `user.getTopTracks|TopArtists|TopAlbums`.
+
+The window selector (Week / Month / Year / All) maps onto each
+backend's idiom (LB `range`, LFM `period`). The same UI (medals,
+covers, MB chip, podium cards) renders all three sources — only the
+data feed changes.
+
+**Overview** and **Heatmap** are still local-only because they need
+aggregates (`distinct_*`, daily minutes, day×hour) that the public
+remote APIs don't expose. The toggle disables the remote pills on
+those tabs and shows a tooltip explaining why.
+
+When the remote source isn't connected, the tab shows a friendly
+empty state telling you which provider to wire up in Settings →
+Scrobbling.
+
+**Files.** `src-tauri/src/commands/scrobble.rs` (LB top-X),
+`src-tauri/src/commands/lastfm.rs` (LFM top-X),
+`src/api/stats.ts`, `src/components/StatsPage.tsx`
+(source pill + per-source fetcher).
+
+**How to use.** Stats → header pills →
+**Local | ListenBrainz | Last.fm**. Switch tabs to Top X and watch
+the same view re-render against the new source.
+
+---
+
+## 19. Heatmap colour ramp: red → yellow → green
+
+**What it is.** The day × hour heatmap got a stoplight-scale ramp:
+silent slots are near-empty, low-activity slots tint **red**, mid
+activity yellow/lime, peak activity bright **green**. Hue is a clean
+linear interpolation 0° → 120° with constant saturation/lightness so
+the gradient reads as a single smooth ramp rather than the previous
+multi-stop blue/magenta/orange rainbow.
+
+The legend strip in the heatmap header reflects the new ramp.
+
+**Files.** `src/components/StatsPage.tsx::heatColor`.
+
+**How to use.** Stats → Heatmap. No knob, no pref — just looks
+right now.
+
+---
+
 ## Appendix — files & paths
 
 | Thing                          | Path                                       |

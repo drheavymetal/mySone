@@ -606,6 +606,25 @@ impl ScrobbleManager {
         Arc::clone(&self.mb_lookup)
     }
 
+    /// Username of the connected ListenBrainz provider, if any. Used
+    /// by the remote-stats commands to know who to query.
+    pub async fn listenbrainz_username(&self) -> Option<String> {
+        let providers = self.providers.read().await;
+        let lb = providers
+            .iter()
+            .find(|p| p.name() == "listenbrainz" && p.is_authenticated())?;
+        lb.username().await
+    }
+
+    /// Username of the connected Last.fm provider, if any.
+    pub async fn lastfm_username(&self) -> Option<String> {
+        let providers = self.providers.read().await;
+        let lf = providers
+            .iter()
+            .find(|p| p.name() == "lastfm" && p.is_authenticated())?;
+        lf.username().await
+    }
+
     /// Backfill the local stats DB with a user's ListenBrainz history.
     ///
     /// The user must be connected to ListenBrainz (the username is taken

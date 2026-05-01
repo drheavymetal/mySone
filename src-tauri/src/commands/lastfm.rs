@@ -202,6 +202,193 @@ pub async fn get_lastfm_artist_tags(
     Ok(tags)
 }
 
+// --------------------------------------------------------------------
+// User stats (top tracks/artists/albums)
+// --------------------------------------------------------------------
+//
+// Wraps `user.getTop*` so the Stats UI can pivot to the connected
+// Last.fm user's view of their library. No session needed — the
+// embedded API key + username is enough for read-only top-X.
+
+fn lfm_period(window: &str) -> &'static str {
+    match window {
+        "week" => "7day",
+        "month" => "1month",
+        "year" => "12month",
+        _ => "overall",
+    }
+}
+
+async fn require_lfm_user(state: &State<'_, AppState>) -> Result<String, SoneError> {
+    state
+        .scrobble_manager
+        .lastfm_username()
+        .await
+        .ok_or_else(|| SoneError::Scrobble("lastfm: not connected".into()))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_lastfm_user_top_tracks(
+    state: State<'_, AppState>,
+    window: String,
+    limit: u32,
+) -> Result<Vec<crate::stats::TopTrack>, SoneError> {
+    let key = api_key()
+        .ok_or_else(|| SoneError::NotConfigured("Last.fm API key missing".into()))?;
+    let user = require_lfm_user(&state).await?;
+    let body = lastfm_get(&[
+        ("method", "user.getTopTracks"),
+        ("user", user.as_str()),
+        ("period", lfm_period(&window)),
+        ("limit", &limit.to_string()),
+        ("api_key", key.as_str()),
+        ("format", "json"),
+    ])
+    .await?;
+    let tracks = body
+        .get("toptracks")
+        .and_then(|t| t.get("track"))
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let out = tracks
+        .into_iter()
+        .filter_map(|t| {
+            let title = t.get("name").and_then(|v| v.as_str())?.to_string();
+            let artist = t
+                .get("artist")
+                .and_then(|a| a.get("name"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let plays = t
+                .get("playcount")
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let duration = t
+                .get("duration")
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            Some(crate::stats::TopTrack {
+                track_id: None,
+                title,
+                artist,
+                album: None,
+                plays,
+                listened_secs: duration.saturating_mul(plays),
+            })
+        })
+        .collect();
+    Ok(out)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_lastfm_user_top_artists(
+    state: State<'_, AppState>,
+    window: String,
+    limit: u32,
+) -> Result<Vec<crate::stats::TopArtist>, SoneError> {
+    let key = api_key()
+        .ok_or_else(|| SoneError::NotConfigured("Last.fm API key missing".into()))?;
+    let user = require_lfm_user(&state).await?;
+    let body = lastfm_get(&[
+        ("method", "user.getTopArtists"),
+        ("user", user.as_str()),
+        ("period", lfm_period(&window)),
+        ("limit", &limit.to_string()),
+        ("api_key", key.as_str()),
+        ("format", "json"),
+    ])
+    .await?;
+    let artists = body
+        .get("topartists")
+        .and_then(|t| t.get("artist"))
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let out = artists
+        .into_iter()
+        .filter_map(|a| {
+            let name = a.get("name").and_then(|v| v.as_str())?.to_string();
+            let plays = a
+                .get("playcount")
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            Some(crate::stats::TopArtist {
+                artist: name,
+                plays,
+                listened_secs: 0,
+                distinct_tracks: 0,
+            })
+        })
+        .collect();
+    Ok(out)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_lastfm_user_top_albums(
+    state: State<'_, AppState>,
+    window: String,
+    limit: u32,
+) -> Result<Vec<crate::stats::TopAlbum>, SoneError> {
+    let key = api_key()
+        .ok_or_else(|| SoneError::NotConfigured("Last.fm API key missing".into()))?;
+    let user = require_lfm_user(&state).await?;
+    let body = lastfm_get(&[
+        ("method", "user.getTopAlbums"),
+        ("user", user.as_str()),
+        ("period", lfm_period(&window)),
+        ("limit", &limit.to_string()),
+        ("api_key", key.as_str()),
+        ("format", "json"),
+    ])
+    .await?;
+    let albums = body
+        .get("topalbums")
+        .and_then(|t| t.get("album"))
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let out = albums
+        .into_iter()
+        .filter_map(|a| {
+            let name = a.get("name").and_then(|v| v.as_str())?.to_string();
+            let artist = a
+                .get("artist")
+                .and_then(|x| x.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let plays = a
+                .get("playcount")
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            Some(crate::stats::TopAlbum {
+                album: name,
+                artist,
+                plays,
+                listened_secs: 0,
+            })
+        })
+        .collect();
+    Ok(out)
+}
+
 async fn lastfm_get(params: &[(&str, &str)]) -> Result<serde_json::Value, SoneError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))

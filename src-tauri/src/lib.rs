@@ -908,6 +908,12 @@ pub fn run() {
             commands::lastfm::get_lastfm_similar_tracks,
             commands::lastfm::get_lastfm_track_tags,
             commands::lastfm::get_lastfm_artist_tags,
+            commands::lastfm::get_lastfm_user_top_tracks,
+            commands::lastfm::get_lastfm_user_top_artists,
+            commands::lastfm::get_lastfm_user_top_albums,
+            commands::scrobble::get_listenbrainz_top_tracks,
+            commands::scrobble::get_listenbrainz_top_artists,
+            commands::scrobble::get_listenbrainz_top_albums,
             // utility
             commands::utility::get_image_bytes,
             commands::utility::get_cache_stats,

@@ -25,7 +25,14 @@ import {
   getTopAlbums,
   getListeningHeatmap,
   getDailyMinutes,
+  getListenBrainzTopTracks,
+  getListenBrainzTopArtists,
+  getListenBrainzTopAlbums,
+  getLastfmUserTopTracks,
+  getLastfmUserTopArtists,
+  getLastfmUserTopAlbums,
   type StatsWindow,
+  type StatsSource,
   type StatsOverview,
   type TopTrack,
   type TopArtist,
@@ -152,9 +159,38 @@ function initialsFor(name: string): string {
 
 // ─── Page ──────────────────────────────────────────────────────────────────
 
+const SOURCES: { id: StatsSource; label: string; sub: string }[] = [
+  { id: "local", label: "Local", sub: "Private" },
+  { id: "listenbrainz", label: "ListenBrainz", sub: "Public" },
+  { id: "lastfm", label: "Last.fm", sub: "Public" },
+];
+
+const SOURCE_COPY: Record<StatsSource, { tag: string; sub: string }> = {
+  local: {
+    tag: "Local · Private",
+    sub: "Built from plays on this machine. Nothing leaves your laptop.",
+  },
+  listenbrainz: {
+    tag: "ListenBrainz · Public",
+    sub: "Pulled live from your ListenBrainz profile.",
+  },
+  lastfm: {
+    tag: "Last.fm · Public",
+    sub: "Pulled live from your Last.fm profile.",
+  },
+};
+
 export default function StatsPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [window, setWindow] = useState<StatsWindow>("month");
+  const [source, setSource] = useState<StatsSource>("local");
+
+  // Overview and Heatmap are local-only — they need aggregates the
+  // remote APIs don't expose. Coerce back to local if the user picks
+  // a remote source while on those tabs.
+  const effectiveSource: StatsSource =
+    tab === "overview" || tab === "heatmap" ? "local" : source;
+  const copy = SOURCE_COPY[effectiveSource];
 
   return (
     <PageContainer className="px-6 pt-6 pb-8">
@@ -162,29 +198,57 @@ export default function StatsPage() {
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-th-accent/80">
             <Activity size={12} strokeWidth={2.5} />
-            <span>Local · Private</span>
+            <span>{copy.tag}</span>
           </div>
           <h1 className="mt-1 bg-gradient-to-br from-th-text-primary to-th-text-muted bg-clip-text text-[34px] font-extrabold leading-none text-transparent">
             Your listening
           </h1>
-          <p className="mt-2 text-[12px] text-th-text-muted">
-            Built from plays on this machine. Nothing leaves your laptop.
-          </p>
+          <p className="mt-2 text-[12px] text-th-text-muted">{copy.sub}</p>
         </div>
-        <div className="flex gap-1 rounded-full border border-th-border-subtle bg-th-surface/60 p-1 backdrop-blur">
-          {WINDOWS.map((w) => (
-            <button
-              key={w.id}
-              onClick={() => setWindow(w.id)}
-              className={`rounded-full px-4 py-1.5 text-[12px] font-semibold transition-all ${
-                window === w.id
-                  ? "bg-th-accent text-black shadow-[0_0_24px_-6px_var(--th-accent)]"
-                  : "text-th-text-muted hover:text-th-text-primary"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-1 rounded-full border border-th-border-subtle bg-th-surface/60 p-1 backdrop-blur">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => setWindow(w.id)}
+                className={`rounded-full px-4 py-1.5 text-[12px] font-semibold transition-all ${
+                  window === w.id
+                    ? "bg-th-accent text-black shadow-[0_0_24px_-6px_var(--th-accent)]"
+                    : "text-th-text-muted hover:text-th-text-primary"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1 rounded-full border border-th-border-subtle bg-th-surface/30 p-0.5">
+            {SOURCES.map((s) => {
+              const isActive = source === s.id;
+              const isDisabled =
+                (tab === "overview" || tab === "heatmap") && s.id !== "local";
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => !isDisabled && setSource(s.id)}
+                  disabled={isDisabled}
+                  title={
+                    isDisabled
+                      ? "This tab uses local data only"
+                      : `Source: ${s.label} (${s.sub})`
+                  }
+                  className={`rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    isActive && !isDisabled
+                      ? "bg-th-accent/15 text-th-accent"
+                      : isDisabled
+                        ? "text-th-text-disabled"
+                        : "text-th-text-faint hover:text-th-text-secondary"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </header>
 
@@ -207,11 +271,17 @@ export default function StatsPage() {
         ))}
       </nav>
 
-      <div key={`${tab}-${window}`} className="stats-fade-in">
+      <div key={`${tab}-${window}-${effectiveSource}`} className="stats-fade-in">
         {tab === "overview" && <OverviewTab window={window} />}
-        {tab === "tracks" && <TopTracksTab window={window} />}
-        {tab === "artists" && <TopArtistsTab window={window} />}
-        {tab === "albums" && <TopAlbumsTab window={window} />}
+        {tab === "tracks" && (
+          <TopTracksTab window={window} source={effectiveSource} />
+        )}
+        {tab === "artists" && (
+          <TopArtistsTab window={window} source={effectiveSource} />
+        )}
+        {tab === "albums" && (
+          <TopAlbumsTab window={window} source={effectiveSource} />
+        )}
         {tab === "heatmap" && <HeatmapTab window={window} />}
       </div>
     </PageContainer>
@@ -711,19 +781,36 @@ function CoverArt({
 
 // ─── Top X tabs ────────────────────────────────────────────────────────────
 
-function TopTracksTab({ window }: { window: StatsWindow }) {
+function TopTracksTab({
+  window,
+  source,
+}: {
+  window: StatsWindow;
+  source: StatsSource;
+}) {
   const [items, setItems] = useState<TopTrack[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    getTopTracks(window, 50)
+    setError(null);
+    setItems([]);
+    const fetcher =
+      source === "listenbrainz"
+        ? getListenBrainzTopTracks
+        : source === "lastfm"
+          ? getLastfmUserTopTracks
+          : getTopTracks;
+    fetcher(window, 50)
       .then(setItems)
+      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window]);
+  }, [window, source]);
   if (loading) return <Loader />;
+  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty="No top tracks yet for this window."
+      empty={emptyCopy(source, "tracks")}
       items={items.map((t, i) => ({
         key: `${t.trackId ?? `${t.title}|${t.artist}`}-${i}`,
         primary: t.title,
@@ -743,19 +830,36 @@ function TopTracksTab({ window }: { window: StatsWindow }) {
   );
 }
 
-function TopArtistsTab({ window }: { window: StatsWindow }) {
+function TopArtistsTab({
+  window,
+  source,
+}: {
+  window: StatsWindow;
+  source: StatsSource;
+}) {
   const [items, setItems] = useState<TopArtist[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    getTopArtists(window, 50)
+    setError(null);
+    setItems([]);
+    const fetcher =
+      source === "listenbrainz"
+        ? getListenBrainzTopArtists
+        : source === "lastfm"
+          ? getLastfmUserTopArtists
+          : getTopArtists;
+    fetcher(window, 50)
       .then(setItems)
+      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window]);
+  }, [window, source]);
   if (loading) return <Loader />;
+  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty="No top artists yet for this window."
+      empty={emptyCopy(source, "artists")}
       items={items.map((a, i) => ({
         key: `${a.artist}-${i}`,
         primary: a.artist,
@@ -770,19 +874,36 @@ function TopArtistsTab({ window }: { window: StatsWindow }) {
   );
 }
 
-function TopAlbumsTab({ window }: { window: StatsWindow }) {
+function TopAlbumsTab({
+  window,
+  source,
+}: {
+  window: StatsWindow;
+  source: StatsSource;
+}) {
   const [items, setItems] = useState<TopAlbum[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    getTopAlbums(window, 50)
+    setError(null);
+    setItems([]);
+    const fetcher =
+      source === "listenbrainz"
+        ? getListenBrainzTopAlbums
+        : source === "lastfm"
+          ? getLastfmUserTopAlbums
+          : getTopAlbums;
+    fetcher(window, 50)
       .then(setItems)
+      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window]);
+  }, [window, source]);
   if (loading) return <Loader />;
+  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty="No top albums yet for this window."
+      empty={emptyCopy(source, "albums")}
       items={items.map((a, i) => ({
         key: `${a.album}|${a.artist}-${i}`,
         primary: a.album,
@@ -801,23 +922,19 @@ function TopAlbumsTab({ window }: { window: StatsWindow }) {
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** Color ramp from cool (low) → hot (high). Returns CSS color. */
+/**
+ * Stoplight-scale heat color: red (low) → yellow → green (high).
+ * Hue goes from 0° (red) through 60° (yellow) to 120° (green) linearly
+ * with intensity. Saturation/lightness stay roughly constant so the
+ * eye reads it as a smooth ramp without darker bands.
+ */
 function heatColor(t: number): string {
-  // t in [0,1]. Hue from 215 (cool blue) → 320 (magenta) → 25 (orange/red).
   if (t <= 0) return "rgba(255,255,255,0.04)";
-  // Two-stop interpolation through magenta for a more "rompedor" gradient.
-  let hue: number;
-  if (t < 0.5) {
-    const k = t / 0.5;
-    hue = 215 + (320 - 215) * k;
-  } else {
-    const k = (t - 0.5) / 0.5;
-    hue = 320 + (25 - 320) * k;
-    if (hue < 0) hue += 360;
-  }
-  const sat = 70 + 20 * t;
-  const light = 38 + 22 * t;
-  return `hsl(${hue.toFixed(0)} ${sat.toFixed(0)}% ${light.toFixed(0)}%)`;
+  const clamped = Math.max(0, Math.min(1, t));
+  const hue = clamped * 120;
+  const sat = 70;
+  const light = 42 + 8 * clamped;
+  return `hsl(${hue.toFixed(0)} ${sat}% ${light.toFixed(0)}%)`;
 }
 
 function HeatmapTab({ window }: { window: StatsWindow }) {
@@ -1023,6 +1140,32 @@ function Loader() {
   return (
     <div className="flex items-center justify-center py-16">
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-th-accent border-t-transparent" />
+    </div>
+  );
+}
+
+function remoteErrorMessage(source: StatsSource, err: unknown): string {
+  const raw = typeof err === "string" ? err : (err as Error)?.message ?? "";
+  if (raw.includes("not connected")) {
+    return source === "lastfm"
+      ? "Connect Last.fm in Sidebar → Scrobble to see your top items."
+      : "Connect ListenBrainz in Sidebar → Scrobble to see your top items.";
+  }
+  return raw || "Something went wrong fetching the remote stats.";
+}
+
+function emptyCopy(source: StatsSource, kind: string): string {
+  if (source === "local") return `No top ${kind} yet for this window.`;
+  return `No top ${kind} on ${
+    source === "lastfm" ? "Last.fm" : "ListenBrainz"
+  } for this window.`;
+}
+
+function RemoteEmpty({ message }: { message: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-th-border-subtle py-16 text-center px-6">
+      <div className="text-[14px] font-bold text-th-text-primary">Heads up</div>
+      <div className="mt-1 text-[12px] text-th-text-muted">{message}</div>
     </div>
   );
 }
