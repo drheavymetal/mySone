@@ -1,9 +1,10 @@
 # SONE Classical — progress tracker
 
-**Última actualización**: 2026-05-01 (bootstrap)
-**Phase activa**: Phase 0 (spike de viabilidad) — _starting_
-**Branch**: `soneClassical`
-**Build status**: master baseline 410fd36 (LFM import + unified Stats merged)
+**Última actualización**: 2026-05-01 22:50 (bootstrap completado)
+**Phase activa**: Phase 0 (spike de viabilidad) — _ready to start, blocked on Claude Code session restart_
+**Branch**: `soneClassical` (commit `3f6121a`)
+**Build status**: master baseline `410fd36` (LFM import + unified Stats merged); soneClassical baseline `3f6121a` (bootstrap)
+**Blocker**: agentes project-scoped en `.claude/agents/` necesitan que Claude Code reinicie sesión para ser invocables. No hay otro blocker.
 
 > **Esta es la fuente de verdad del estado del proyecto.** Cualquier discrepancia con otros archivos se resuelve mirando aquí.
 
