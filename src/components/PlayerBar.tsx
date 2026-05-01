@@ -15,12 +15,13 @@ import {
   PictureInPicture2,
   Frame,
   Orbit,
+  MoreVertical,
 } from "lucide-react";
 import { getTidalImageUrl, getTrackDisplayTitle } from "../types";
 import ExplicitBadge from "./ExplicitBadge";
 import { formatTime } from "../lib/format";
 import TidalImage from "./TidalImage";
-import { useCallback, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
   currentTrackAtom,
@@ -490,36 +491,14 @@ export default function PlayerBar() {
       <TransportControls />
 
       {/* Right: Volume & Extras */}
-      <div className="flex items-center justify-end gap-4 w-[30%] min-w-[180px]">
+      <div className="flex items-center justify-end gap-2 w-[30%] min-w-[180px] overflow-hidden">
         <QualityBadge onClick={() => setSignalPathOpen(true)} />
-        <button
-          onClick={() => setLyricsOpen(true)}
-          title="Letras"
-          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
-        >
-          <Mic2 size={18} />
-        </button>
-        <button
-          onClick={() => setChatOpen(true)}
-          title="Construir cola con IA"
-          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
-        >
-          <Sparkles size={18} />
-        </button>
-        <button
-          onClick={() => setLivePaintingOpen(true)}
-          title="Modo cuadro vivo"
-          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
-        >
-          <Frame size={18} />
-        </button>
-        <button
-          onClick={() => setGalaxyOpen(true)}
-          title="Galaxia 3D de tu librería"
-          className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-inset transition-colors"
-        >
-          <Orbit size={18} />
-        </button>
+        <ToolsMenu
+          onLyrics={() => setLyricsOpen(true)}
+          onChat={() => setChatOpen(true)}
+          onLivePainting={() => setLivePaintingOpen(true)}
+          onGalaxy={() => setGalaxyOpen(true)}
+        />
         <ShareLinkButton />
         <DrawerButtons />
         <MiniPlayerButton />
@@ -531,6 +510,89 @@ export default function PlayerBar() {
       <LivePaintingMode open={livePaintingOpen} onClose={() => setLivePaintingOpen(false)} />
       <LibraryGalaxy open={galaxyOpen} onClose={() => setGalaxyOpen(false)} />
       <QueueChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * Submenu that hides the less-frequent player actions (lyrics, queue
+ * chat, live painting, library galaxy) behind a single trigger so the
+ * PlayerBar doesn't overflow on narrower windows. Opens upward
+ * (`bottom-full`) since it lives above an always-on-top status bar.
+ */
+function ToolsMenu({
+  onLyrics,
+  onChat,
+  onLivePainting,
+  onGalaxy,
+}: {
+  onLyrics: () => void;
+  onChat: () => void;
+  onLivePainting: () => void;
+  onGalaxy: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click / Esc.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const items: { icon: typeof Mic2; label: string; onClick: () => void }[] = [
+    { icon: Mic2, label: "Letras", onClick: onLyrics },
+    { icon: Sparkles, label: "Cola con IA", onClick: onChat },
+    { icon: Frame, label: "Cuadro vivo", onClick: onLivePainting },
+    { icon: Orbit, label: "Galaxia 3D", onClick: onGalaxy },
+  ];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Más herramientas"
+        className={`p-1.5 rounded-md transition-colors ${
+          open
+            ? "text-th-text-primary bg-th-inset"
+            : "text-th-text-muted hover:text-th-text-primary hover:bg-th-inset"
+        }`}
+      >
+        <MoreVertical size={18} />
+      </button>
+      {open && (
+        <div
+          className="absolute bottom-full right-0 mb-2 w-48 bg-th-elevated border border-th-border-subtle rounded-lg shadow-2xl py-1 z-[60]"
+          style={{ animation: "fadeIn 0.12s ease-out" }}
+        >
+          {items.map(({ icon: Icon, label, onClick }) => (
+            <button
+              key={label}
+              onClick={() => {
+                setOpen(false);
+                onClick();
+              }}
+              className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-th-text-secondary hover:bg-th-inset hover:text-th-text-primary transition-colors"
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
