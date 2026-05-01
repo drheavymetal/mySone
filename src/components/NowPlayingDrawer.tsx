@@ -12,12 +12,21 @@ import {
   GripVertical,
   Maximize2,
   ExternalLink,
+  Radio,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   getMbTrackDetails,
   type MbTrackDetails,
 } from "../api/coverLookup";
+import {
+  getLastfmSimilarTracks,
+  getLastfmTrackTags,
+  type LfmSimilarTrack,
+  type LfmTag,
+} from "../api/lastfm";
+import { invoke } from "@tauri-apps/api/core";
+import type { SearchResults } from "../types";
 import ExplicitBadge from "./ExplicitBadge";
 import { parseLrc, type LrcLine } from "../lib/lrc";
 import {
@@ -66,11 +75,12 @@ import TrackContextMenu from "./TrackContextMenu";
 import { TrackArtists, type ArtistInfo } from "./TrackArtists";
 import { getTrackArtistDisplay } from "../utils/itemHelpers";
 
-type TabId = "queue" | "suggested" | "lyrics" | "credits";
+type TabId = "queue" | "suggested" | "similar" | "lyrics" | "credits";
 
 const TABS: { id: TabId; label: string; icon: typeof ListMusic }[] = [
   { id: "queue", label: "Play queue", icon: ListMusic },
   { id: "suggested", label: "Suggested tracks", icon: Sparkles },
+  { id: "similar", label: "Similar", icon: Radio },
   { id: "lyrics", label: "Lyrics", icon: Mic2 },
   { id: "credits", label: "Credits", icon: Users },
 ];
@@ -933,6 +943,188 @@ const LyricsLine = memo(function LyricsLine({
   );
 });
 
+// ─── Similar Tracks Tab (Last.fm) ────────────────────────────────────────────
+
+const SimilarTab = memo(function SimilarTab() {
+  const currentTrack = useAtomValue(currentTrackAtom);
+  const { playTrack, addToQueue } = usePlaybackActions();
+  const { showToast } = useToast();
+  const [items, setItems] = useState<LfmSimilarTrack[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!currentTrack) return;
+    let active = true;
+    setLoading(true);
+    setItems([]);
+    const title = getTrackDisplayTitle(currentTrack);
+    const artist = getTrackArtistDisplay(currentTrack);
+    getLastfmSimilarTracks(title, artist, 25)
+      .then((res) => {
+        if (active) setItems(res);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentTrack?.id]);
+
+  // Resolve a Last.fm name pair to a TIDAL Track via search.
+  const resolveTrack = useCallback(
+    async (it: LfmSimilarTrack): Promise<Track | null> => {
+      try {
+        const res = await invoke<SearchResults>("search_tidal", {
+          query: `${it.name} ${it.artist}`,
+          limit: 5,
+        });
+        const titleNorm = it.name.toLowerCase();
+        // Prefer a track whose title matches case-insensitively, fall
+        // back to the first result.
+        return (
+          res.tracks.find((t) => t.title.toLowerCase() === titleNorm) ||
+          res.tracks[0] ||
+          null
+        );
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const handlePlay = useCallback(
+    async (it: LfmSimilarTrack) => {
+      const t = await resolveTrack(it);
+      if (!t) {
+        showToast(`"${it.name}" not found on TIDAL`, "error");
+        return;
+      }
+      playTrack(t);
+    },
+    [resolveTrack, playTrack, showToast],
+  );
+
+  const handleAddToQueue = useCallback(
+    async (it: LfmSimilarTrack) => {
+      const t = await resolveTrack(it);
+      if (!t) {
+        showToast(`"${it.name}" not found on TIDAL`, "error");
+        return;
+      }
+      const trackSource = t.album
+        ? {
+            type: "album" as const,
+            id: t.album.id,
+            name: t.album.title,
+            image: t.album.cover,
+          }
+        : undefined;
+      addToQueue(t, trackSource);
+      const label = t.title.length > 30 ? t.title.slice(0, 28) + "…" : t.title;
+      showToast(`Added "${label}" to queue`, "success");
+    },
+    [resolveTrack, addToQueue, showToast],
+  );
+
+  if (!currentTrack) return null;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-th-accent border-t-transparent" />
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-th-text-disabled">
+        <Radio size={40} className="mb-3" />
+        <p className="text-sm">No similar tracks found on Last.fm</p>
+        <p className="text-xs mt-1">Tracks need a few scrobbles globally for the graph to know them.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-th-text-faint mb-2">
+        Powered by Last.fm · {items.length} matches
+      </div>
+      {items.map((it, i) => (
+        <SimilarRow
+          key={`${it.artist}|${it.name}|${i}`}
+          item={it}
+          onPlay={() => void handlePlay(it)}
+          onQueue={() => void handleAddToQueue(it)}
+        />
+      ))}
+    </div>
+  );
+});
+
+function SimilarRow({
+  item,
+  onPlay,
+  onQueue,
+}: {
+  item: LfmSimilarTrack;
+  onPlay: () => void;
+  onQueue: () => void;
+}) {
+  const pct = Math.round(Math.max(0, Math.min(1, item.matchScore)) * 100);
+  return (
+    <div
+      className="group relative flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-th-hl-faint cursor-pointer transition-colors"
+      onClick={onPlay}
+    >
+      <div
+        className="absolute inset-y-0 left-0 rounded-md bg-th-accent/10 transition-all"
+        style={{ width: `${pct}%`, opacity: 0.3 }}
+      />
+      <div className="relative flex-1 min-w-0">
+        <div className="text-[13px] font-medium text-th-text-primary truncate">
+          {item.name}
+        </div>
+        <div className="text-[11px] text-th-text-muted truncate">
+          {item.artist}
+          {item.playcount && item.playcount > 1000 ? (
+            <span className="text-th-text-faint">
+              {" "}
+              · {Math.round(item.playcount / 1000).toLocaleString()}k plays
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="relative shrink-0 flex items-center gap-2">
+        <span className="text-[10px] font-bold tabular-nums text-th-text-faint w-7 text-right">
+          {pct}%
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onQueue();
+          }}
+          title="Add to queue"
+          className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-full hover:bg-th-bg-inset flex items-center justify-center text-th-text-muted hover:text-th-text-primary transition-all"
+        >
+          <ListPlus size={14} />
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay();
+          }}
+          title="Play"
+          className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-full bg-th-accent text-black flex items-center justify-center hover:brightness-110 transition-all"
+        >
+          <Play size={12} fill="currentColor" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const LyricsTab = memo(function LyricsTab() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const isPlaying = useAtomValue(isPlayingAtom);
@@ -1189,17 +1381,20 @@ const CreditsTab = memo(function CreditsTab() {
     };
   }, [currentTrack?.id]);
 
-  // MusicBrainz enrichment — fires after the basic credits load so it
-  // doesn't compete for the first paint. Fail-soft: empty result just
-  // means nothing extra renders.
+  // MusicBrainz + Last.fm enrichment — both fire after the basic
+  // credits load. Independent: either one returning empty just means
+  // its sub-section hides itself.
+  const [lfmTags, setLfmTags] = useState<LfmTag[]>([]);
   useEffect(() => {
     if (!currentTrack) {
       setMb(null);
+      setLfmTags([]);
       return;
     }
     let active = true;
     setMbLoading(true);
     setMb(null);
+    setLfmTags([]);
     const title = getTrackDisplayTitle(currentTrack);
     const artist = getTrackArtistDisplay(currentTrack);
     getMbTrackDetails(title, artist)
@@ -1212,6 +1407,9 @@ const CreditsTab = memo(function CreditsTab() {
       .finally(() => {
         if (active) setMbLoading(false);
       });
+    getLastfmTrackTags(title, artist).then((tags) => {
+      if (active) setLfmTags(tags);
+    });
     return () => {
       active = false;
     };
@@ -1327,7 +1525,7 @@ const CreditsTab = memo(function CreditsTab() {
         </div>
       )}
 
-      <MusicBrainzSection mb={mb} loading={mbLoading} />
+      <MusicBrainzSection mb={mb} loading={mbLoading} lfmTags={lfmTags} />
     </div>
   );
 });
@@ -1340,9 +1538,11 @@ const CreditsTab = memo(function CreditsTab() {
 function MusicBrainzSection({
   mb,
   loading,
+  lfmTags,
 }: {
   mb: MbTrackDetails | null;
   loading: boolean;
+  lfmTags: LfmTag[];
 }) {
   if (loading) {
     return (
@@ -1352,59 +1552,90 @@ function MusicBrainzSection({
       </div>
     );
   }
-  if (!mb) return null;
+  if (!mb && lfmTags.length === 0) return null;
 
   // Skip the "primary" entries — those are already rendered by TIDAL
   // credits. We only show MB rows that bring new information.
-  const extraCredits = mb.credits.filter(
-    (c) => c.role !== "primary" && c.role !== "performer",
-  );
+  const extraCredits =
+    mb?.credits.filter(
+      (c) => c.role !== "primary" && c.role !== "performer",
+    ) ?? [];
+  const mbTags = mb?.tags ?? [];
+  const mbUrls = mb?.urls ?? [];
+  const recordingMbid = mb?.recordingMbid;
+  const disambiguation = mb?.disambiguation;
+  const firstReleaseYear = mb?.firstReleaseYear;
   const hasAnything =
     extraCredits.length > 0 ||
-    mb.tags.length > 0 ||
-    mb.urls.length > 0 ||
-    mb.recordingMbid;
+    mbTags.length > 0 ||
+    mbUrls.length > 0 ||
+    lfmTags.length > 0 ||
+    recordingMbid;
   if (!hasAnything) return null;
 
   return (
     <div className="flex flex-col pt-6 mt-2">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-[16px] font-bold text-th-text-primary">
-          MusicBrainz
+          More info
         </h3>
-        {mb.recordingMbid && (
+        {recordingMbid && (
           <button
             onClick={() =>
               void openUrl(
-                `https://musicbrainz.org/recording/${mb.recordingMbid}`,
+                `https://musicbrainz.org/recording/${recordingMbid}`,
               )
             }
             className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-th-text-faint hover:text-th-accent transition-colors"
           >
-            View
+            MusicBrainz
             <ExternalLink size={11} />
           </button>
         )}
       </div>
 
-      {mb.disambiguation && (
+      {disambiguation && (
         <p className="text-[12px] text-th-text-muted italic mb-2">
-          {mb.disambiguation}
-          {mb.firstReleaseYear ? ` · ${mb.firstReleaseYear}` : ""}
+          {disambiguation}
+          {firstReleaseYear ? ` · ${firstReleaseYear}` : ""}
         </p>
       )}
 
-      {mb.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {mb.tags.map((t) => (
-            <span
-              key={t.name}
-              className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-th-accent/10 text-th-accent"
-              title={`${t.count} ${t.count === 1 ? "vote" : "votes"}`}
-            >
-              {t.name}
-            </span>
-          ))}
+      {mbTags.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-th-text-faint mb-1.5">
+            MusicBrainz tags
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {mbTags.map((t) => (
+              <span
+                key={t.name}
+                className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-th-accent/10 text-th-accent"
+                title={`${t.count} ${t.count === 1 ? "vote" : "votes"}`}
+              >
+                {t.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {lfmTags.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-th-text-faint mb-1.5">
+            Last.fm tags
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {lfmTags.map((t) => (
+              <span
+                key={t.name}
+                className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-th-hl-faint text-th-text-secondary"
+                title={`${t.count} ${t.count === 1 ? "use" : "uses"}`}
+              >
+                {t.name}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -1420,9 +1651,9 @@ function MusicBrainzSection({
         </div>
       )}
 
-      {mb.urls.length > 0 && (
+      {mbUrls.length > 0 && (
         <div className="flex flex-wrap gap-2 pt-3 border-t border-th-border-subtle mt-3">
-          {mb.urls.map((u) => (
+          {mbUrls.map((u) => (
             <button
               key={u.url}
               onClick={() => void openUrl(u.url)}
@@ -1812,6 +2043,11 @@ export default function NowPlayingDrawer() {
             {activeTab === "suggested" && (
               <div className="absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
                 <SuggestedTab />
+              </div>
+            )}
+            {activeTab === "similar" && (
+              <div className="absolute inset-0 overflow-y-auto px-6 py-4 scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
+                <SimilarTab />
               </div>
             )}
             {activeTab === "lyrics" && (

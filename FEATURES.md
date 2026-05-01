@@ -385,6 +385,46 @@ credits/bio. Click any external link or chip to open in your browser.
 
 ---
 
+## 17. Last.fm "Similar tracks" tab + tag enrichment
+
+**What it is.** Two pieces shipping together that lean on the Last.fm
+public API (no account required — uses the embedded API key only):
+
+* **Similar tab in the drawer** — for the currently playing track,
+  fetches Last.fm's collaborative-filter graph (`track.getSimilar`)
+  and lists up to 25 similar tracks ranked by match score (0–100%).
+  Each row shows match %, artist, and global playcount; the row is
+  click-to-play, with hover-revealed *queue* and *play* buttons.
+  Click resolution: SONE searches TIDAL on demand for the picked LFM
+  track; if it's not on TIDAL the user gets a toast instead of a
+  silent failure. Results cached 7 days in localStorage.
+
+* **Last.fm tags in the Credits tab** — alongside the existing
+  MusicBrainz tags, a separate "Last.fm tags" cluster renders below
+  the MB tags. Different flavour: more mood / era / "vibe"
+  (`dreamy`, `00s indie`, `running music`) where MB skews to canonical
+  genre. Capped at 8, ordered by community use count, cached 30 days.
+
+**Files.** `src-tauri/src/commands/lastfm.rs`, `src/api/lastfm.ts`,
+`src/components/NowPlayingDrawer.tsx::SimilarTab` and the extended
+`MusicBrainzSection` (now renamed "More info" since it covers both
+sources).
+
+**How to use.**
+
+* Drawer → **Similar** tab (radio-tower icon). Click any row to play,
+  hover to reveal queue / play buttons explicitly.
+* Drawer → **Credits** tab → scroll to "More info" → tags appear in
+  two clusters labelled *MusicBrainz tags* and *Last.fm tags*.
+
+To clear cached LFM responses:
+
+```js
+localStorage.removeItem("sone:lastfm-cache:v1")
+```
+
+---
+
 ## Appendix — files & paths
 
 | Thing                          | Path                                       |

@@ -905,6 +905,9 @@ pub fn run() {
             commands::scrobble::import_listenbrainz_history,
             commands::musicbrainz::lookup_album_cover_caa,
             commands::musicbrainz::get_mb_track_details,
+            commands::lastfm::get_lastfm_similar_tracks,
+            commands::lastfm::get_lastfm_track_tags,
+            commands::lastfm::get_lastfm_artist_tags,
             // utility
             commands::utility::get_image_bytes,
             commands::utility::get_cache_stats,
