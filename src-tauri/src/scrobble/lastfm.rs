@@ -3,11 +3,190 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::SoneError;
 
 use super::{ScrobbleProvider, ScrobbleResult, ScrobbleTrack};
+
+// ---------------------------------------------------------------------------
+// Recent-tracks (history import)
+// ---------------------------------------------------------------------------
+
+/// One scrobble returned by `user.getRecentTracks`, distilled to the
+/// fields the local stats DB needs.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTrackItem {
+    pub listened_at: i64,
+    pub track_name: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub recording_mbid: Option<String>,
+}
+
+/// One page of `user.getRecentTracks`. `total_pages` lets the importer
+/// stop once it walks past the last available page.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTracksPage {
+    pub page: u32,
+    pub total_pages: u32,
+    pub tracks: Vec<RecentTrackItem>,
+}
+
+/// Fetch one page of a user's recent scrobbles. No session needed —
+/// the embedded API key plus a public username is enough. The
+/// `nowplaying` entry (the track currently being scrobbled, no `date`
+/// field) is filtered out so it doesn't poison the import with fake
+/// listened_at=0 rows.
+pub async fn fetch_recent_tracks(
+    client: &reqwest::Client,
+    api_key: &str,
+    username: &str,
+    from_ts: Option<i64>,
+    page: u32,
+    limit: u32,
+) -> Result<RecentTracksPage, SoneError> {
+    let limit = limit.clamp(1, 200);
+    let mut query: Vec<(&str, String)> = vec![
+        ("method", "user.getRecentTracks".into()),
+        ("user", username.into()),
+        ("api_key", api_key.into()),
+        ("format", "json".into()),
+        ("limit", limit.to_string()),
+        ("page", page.max(1).to_string()),
+    ];
+    if let Some(ts) = from_ts {
+        if ts > 0 {
+            query.push(("from", ts.to_string()));
+        }
+    }
+
+    let resp = client
+        .get("https://ws.audioscrobbler.com/2.0/")
+        .query(&query)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| SoneError::Scrobble(format!("getRecentTracks request failed: {e}")))?;
+    let status = resp.status();
+    if status.as_u16() == 429 {
+        return Err(SoneError::Scrobble("getRecentTracks: rate limited".into()));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(SoneError::Scrobble(format!(
+            "getRecentTracks HTTP {status}: {body}"
+        )));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SoneError::Scrobble(format!("getRecentTracks parse failed: {e}")))?;
+
+    if let Some(code) = body.get("error").and_then(|c| c.as_u64()) {
+        let msg = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        return Err(SoneError::Scrobble(format!(
+            "getRecentTracks error {code}: {msg}"
+        )));
+    }
+
+    let recent = body
+        .get("recenttracks")
+        .ok_or_else(|| SoneError::Scrobble("getRecentTracks: missing recenttracks".into()))?;
+
+    let attr = recent.get("@attr");
+    let total_pages = attr
+        .and_then(|a| a.get("totalPages"))
+        .and_then(|v| match v {
+            Value::String(s) => s.parse::<u32>().ok(),
+            Value::Number(n) => n.as_u64().map(|x| x as u32),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let cur_page = attr
+        .and_then(|a| a.get("page"))
+        .and_then(|v| match v {
+            Value::String(s) => s.parse::<u32>().ok(),
+            Value::Number(n) => n.as_u64().map(|x| x as u32),
+            _ => None,
+        })
+        .unwrap_or(page);
+
+    // `track` is `[]` when empty, an array when there are several, but
+    // sometimes a single-object when there's exactly one (cheap LFM JSON
+    // quirk). Coerce to a Vec uniformly.
+    let raw_tracks: Vec<Value> = match recent.get("track") {
+        Some(Value::Array(a)) => a.clone(),
+        Some(v @ Value::Object(_)) => vec![v.clone()],
+        _ => Vec::new(),
+    };
+
+    let mut tracks = Vec::with_capacity(raw_tracks.len());
+    for raw in raw_tracks {
+        // Skip the now-playing entry (no `date` -> `@attr.nowplaying`).
+        if raw
+            .get("@attr")
+            .and_then(|a| a.get("nowplaying"))
+            .is_some()
+        {
+            continue;
+        }
+        let listened_at = raw
+            .get("date")
+            .and_then(|d| d.get("uts"))
+            .and_then(|v| match v {
+                Value::String(s) => s.parse::<i64>().ok(),
+                Value::Number(n) => n.as_i64(),
+                _ => None,
+            });
+        let Some(listened_at) = listened_at else {
+            continue;
+        };
+        let track_name = raw
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let artist_name = raw
+            .get("artist")
+            .and_then(|a| a.get("#text").or_else(|| a.get("name")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if track_name.is_empty() || artist_name.is_empty() {
+            continue;
+        }
+        let album_name = raw
+            .get("album")
+            .and_then(|a| a.get("#text").or_else(|| a.get("name")))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let recording_mbid = raw
+            .get("mbid")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        tracks.push(RecentTrackItem {
+            listened_at,
+            track_name,
+            artist_name,
+            album_name,
+            recording_mbid,
+        });
+    }
+
+    Ok(RecentTracksPage {
+        page: cur_page,
+        total_pages,
+        tracks,
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Session data

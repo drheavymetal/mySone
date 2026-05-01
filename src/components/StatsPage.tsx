@@ -16,6 +16,8 @@ import {
   Crown,
   Headphones,
   ExternalLink,
+  Compass,
+  Sunrise,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -25,20 +27,17 @@ import {
   getTopAlbums,
   getListeningHeatmap,
   getDailyMinutes,
-  getListenBrainzTopTracks,
-  getListenBrainzTopArtists,
-  getListenBrainzTopAlbums,
-  getLastfmUserTopTracks,
-  getLastfmUserTopArtists,
-  getLastfmUserTopAlbums,
+  getHourMinutes,
+  getDiscoveryCurve,
   type StatsWindow,
-  type StatsSource,
   type StatsOverview,
   type TopTrack,
   type TopArtist,
   type TopAlbum,
   type HeatmapCell,
   type DailyMinutes,
+  type HourMinutes,
+  type DiscoveryPoint,
 } from "../api/stats";
 import {
   getTrackCover,
@@ -53,14 +52,14 @@ type CoverKind =
   | { kind: "album"; album: string; artist: string }
   | { kind: "artist"; artist: string };
 
-type Tab = "overview" | "tracks" | "artists" | "albums" | "heatmap";
+type Tab = "overview" | "tracks" | "artists" | "albums" | "patterns";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "tracks", label: "Top Tracks" },
   { id: "artists", label: "Top Artists" },
   { id: "albums", label: "Top Albums" },
-  { id: "heatmap", label: "Heatmap" },
+  { id: "patterns", label: "Patterns" },
 ];
 
 const WINDOWS: { id: StatsWindow; label: string }[] = [
@@ -159,38 +158,9 @@ function initialsFor(name: string): string {
 
 // ─── Page ──────────────────────────────────────────────────────────────────
 
-const SOURCES: { id: StatsSource; label: string; sub: string }[] = [
-  { id: "local", label: "Local", sub: "Private" },
-  { id: "listenbrainz", label: "ListenBrainz", sub: "Public" },
-  { id: "lastfm", label: "Last.fm", sub: "Public" },
-];
-
-const SOURCE_COPY: Record<StatsSource, { tag: string; sub: string }> = {
-  local: {
-    tag: "Local · Private",
-    sub: "Built from plays on this machine. Nothing leaves your laptop.",
-  },
-  listenbrainz: {
-    tag: "ListenBrainz · Public",
-    sub: "Pulled live from your ListenBrainz profile.",
-  },
-  lastfm: {
-    tag: "Last.fm · Public",
-    sub: "Pulled live from your Last.fm profile.",
-  },
-};
-
 export default function StatsPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [window, setWindow] = useState<StatsWindow>("month");
-  const [source, setSource] = useState<StatsSource>("local");
-
-  // Overview and Heatmap are local-only — they need aggregates the
-  // remote APIs don't expose. Coerce back to local if the user picks
-  // a remote source while on those tabs.
-  const effectiveSource: StatsSource =
-    tab === "overview" || tab === "heatmap" ? "local" : source;
-  const copy = SOURCE_COPY[effectiveSource];
 
   return (
     <PageContainer className="px-6 pt-6 pb-8">
@@ -198,12 +168,15 @@ export default function StatsPage() {
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-th-accent/80">
             <Activity size={12} strokeWidth={2.5} />
-            <span>{copy.tag}</span>
+            <span>Unified · Local + imports</span>
           </div>
           <h1 className="mt-1 bg-gradient-to-br from-th-text-primary to-th-text-muted bg-clip-text text-[34px] font-extrabold leading-none text-transparent">
             Your listening
           </h1>
-          <p className="mt-2 text-[12px] text-th-text-muted">{copy.sub}</p>
+          <p className="mt-2 text-[12px] text-th-text-muted">
+            SONE plays plus any history imported from ListenBrainz / Last.fm,
+            deduplicated. Nothing leaves your laptop.
+          </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex gap-1 rounded-full border border-th-border-subtle bg-th-surface/60 p-1 backdrop-blur">
@@ -220,34 +193,6 @@ export default function StatsPage() {
                 {w.label}
               </button>
             ))}
-          </div>
-          <div className="flex gap-1 rounded-full border border-th-border-subtle bg-th-surface/30 p-0.5">
-            {SOURCES.map((s) => {
-              const isActive = source === s.id;
-              const isDisabled =
-                (tab === "overview" || tab === "heatmap") && s.id !== "local";
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => !isDisabled && setSource(s.id)}
-                  disabled={isDisabled}
-                  title={
-                    isDisabled
-                      ? "This tab uses local data only"
-                      : `Source: ${s.label} (${s.sub})`
-                  }
-                  className={`rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-all ${
-                    isActive && !isDisabled
-                      ? "bg-th-accent/15 text-th-accent"
-                      : isDisabled
-                        ? "text-th-text-disabled"
-                        : "text-th-text-faint hover:text-th-text-secondary"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
           </div>
         </div>
       </header>
@@ -271,18 +216,12 @@ export default function StatsPage() {
         ))}
       </nav>
 
-      <div key={`${tab}-${window}-${effectiveSource}`} className="stats-fade-in">
+      <div key={`${tab}-${window}`} className="stats-fade-in">
         {tab === "overview" && <OverviewTab window={window} />}
-        {tab === "tracks" && (
-          <TopTracksTab window={window} source={effectiveSource} />
-        )}
-        {tab === "artists" && (
-          <TopArtistsTab window={window} source={effectiveSource} />
-        )}
-        {tab === "albums" && (
-          <TopAlbumsTab window={window} source={effectiveSource} />
-        )}
-        {tab === "heatmap" && <HeatmapTab window={window} />}
+        {tab === "tracks" && <TopTracksTab window={window} />}
+        {tab === "artists" && <TopArtistsTab window={window} />}
+        {tab === "albums" && <TopAlbumsTab window={window} />}
+        {tab === "patterns" && <PatternsTab window={window} />}
       </div>
     </PageContainer>
   );
@@ -293,6 +232,7 @@ export default function StatsPage() {
 function OverviewTab({ window }: { window: StatsWindow }) {
   const [overview, setOverview] = useState<StatsOverview | null>(null);
   const [daily, setDaily] = useState<DailyMinutes[]>([]);
+  const [discovery, setDiscovery] = useState<DiscoveryPoint[]>([]);
   const [topTrack, setTopTrack] = useState<TopTrack | null>(null);
   const [topArtist, setTopArtist] = useState<TopArtist | null>(null);
   const [topAlbum, setTopAlbum] = useState<TopAlbum | null>(null);
@@ -303,13 +243,15 @@ function OverviewTab({ window }: { window: StatsWindow }) {
     Promise.all([
       getStatsOverview(window),
       getDailyMinutes(window),
+      getDiscoveryCurve(window),
       getTopTracks(window, 1),
       getTopArtists(window, 1),
       getTopAlbums(window, 1),
     ])
-      .then(([ov, dm, tt, ta, tal]) => {
+      .then(([ov, dm, dc, tt, ta, tal]) => {
         setOverview(ov);
         setDaily(dm);
+        setDiscovery(dc);
         setTopTrack(tt[0] ?? null);
         setTopArtist(ta[0] ?? null);
         setTopAlbum(tal[0] ?? null);
@@ -372,6 +314,8 @@ function OverviewTab({ window }: { window: StatsWindow }) {
         />
       </div>
 
+      <DiscoveryCard discovery={discovery} window={window} />
+
       {(topTrack || topArtist || topAlbum) && (
         <div>
           <SectionHeading
@@ -422,6 +366,226 @@ function OverviewTab({ window }: { window: StatsWindow }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Discovery curve ───────────────────────────────────────────────────────
+
+/**
+ * Shows the cumulative count of brand-new artists/tracks first heard
+ * during the window, plus the daily counts as a soft histogram. Steep
+ * = exploring; flat = comfort zone. Drawn over the *full* window range
+ * (including silent days) so a flat tail visually communicates "no new
+ * music recently".
+ */
+function DiscoveryCard({
+  discovery,
+  window,
+}: {
+  discovery: DiscoveryPoint[];
+  window: StatsWindow;
+}) {
+  const dense = useMemo(() => densifyDiscovery(discovery, window), [
+    discovery,
+    window,
+  ]);
+
+  const totalArtists = dense.reduce((s, d) => s + d.newArtists, 0);
+  const totalTracks = dense.reduce((s, d) => s + d.newTracks, 0);
+
+  return (
+    <div className="rounded-2xl border border-th-border-subtle bg-th-surface/60 p-5">
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-th-accent/80">
+            <Compass size={12} />
+            <span>Discovery</span>
+          </div>
+          <div className="mt-1 text-[14px] font-bold text-th-text-primary">
+            {totalArtists} new {totalArtists === 1 ? "artist" : "artists"}
+            <span className="text-th-text-muted font-normal">
+              {" "}
+              · {totalTracks} new {totalTracks === 1 ? "track" : "tracks"}
+            </span>
+          </div>
+          <div className="text-[11px] text-th-text-muted">
+            First-time encounters across your whole local history.
+          </div>
+        </div>
+      </div>
+      <DiscoveryChart points={dense} />
+    </div>
+  );
+}
+
+function densifyDiscovery(
+  points: DiscoveryPoint[],
+  window: StatsWindow,
+): DiscoveryPoint[] {
+  if (points.length === 0) return [];
+  // Build the full date range so silent days flatten the curve visibly.
+  const last = new Date();
+  const first = (() => {
+    if (window === "all") {
+      // Use the earliest reported point. (All-time can span years —
+      // densifying every day would be wasteful; instead we just keep
+      // the points we have and rely on the chart to interpolate.)
+      return new Date(points[0].date + "T00:00:00");
+    }
+    const days = window === "year" ? 365 : window === "month" ? 30 : 7;
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - days);
+    return d;
+  })();
+  const map = new Map(points.map((p) => [p.date, p]));
+  const out: DiscoveryPoint[] = [];
+  const cursor = new Date(first);
+  while (cursor <= last) {
+    const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+    const p = map.get(iso);
+    out.push({
+      date: iso,
+      newArtists: p?.newArtists ?? 0,
+      newTracks: p?.newTracks ?? 0,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+function DiscoveryChart({ points }: { points: DiscoveryPoint[] }) {
+  const W = 600;
+  const H = 160;
+  const PAD_X = 8;
+  const PAD_Y = 12;
+
+  const { artistPath, artistArea, trackPath, bars, maxCum, dot } = useMemo(() => {
+    if (points.length === 0) {
+      return {
+        artistPath: "",
+        artistArea: "",
+        trackPath: "",
+        bars: [] as { x: number; w: number; h: number }[],
+        maxCum: 0,
+        dot: { x: 0, y: 0, label: "" },
+      };
+    }
+    let cumA = 0;
+    let cumT = 0;
+    const cumArtists: number[] = [];
+    const cumTracks: number[] = [];
+    let maxBar = 0;
+    for (const p of points) {
+      cumA += p.newArtists;
+      cumT += p.newTracks;
+      cumArtists.push(cumA);
+      cumTracks.push(cumT);
+      maxBar = Math.max(maxBar, p.newArtists);
+    }
+    const max = Math.max(cumA, cumT, 1);
+    const innerW = W - PAD_X * 2;
+    const innerH = H - PAD_Y * 2;
+    const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
+    const xy = (i: number, v: number) =>
+      [PAD_X + i * stepX, PAD_Y + innerH * (1 - v / max)] as const;
+
+    const buildPath = (vals: number[]) =>
+      vals
+        .map((v, i) => {
+          const [x, y] = xy(i, v);
+          return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+        })
+        .join(" ");
+
+    const aPath = buildPath(cumArtists);
+    const tPath = buildPath(cumTracks);
+    const last = xy(points.length - 1, cumArtists[cumArtists.length - 1]);
+    const first = xy(0, cumArtists[0]);
+    const aArea = `${aPath} L ${last[0].toFixed(2)} ${(H - PAD_Y).toFixed(2)} L ${first[0].toFixed(2)} ${(H - PAD_Y).toFixed(2)} Z`;
+
+    // Daily bars for new artists, scaled to a soft third of the area.
+    const barH = innerH * 0.4;
+    const barScale = maxBar ? barH / maxBar : 0;
+    const barW = Math.max(1, stepX - 1);
+    const bars = points.map((p, i) => {
+      const x = PAD_X + i * stepX - barW / 2;
+      const h = p.newArtists * barScale;
+      return { x, w: barW, h };
+    });
+
+    return {
+      artistPath: aPath,
+      artistArea: aArea,
+      trackPath: tPath,
+      bars,
+      maxCum: max,
+      dot: { x: last[0], y: last[1], label: `${cumA}` },
+    };
+  }, [points]);
+
+  if (points.length === 0 || maxCum === 0) {
+    return (
+      <div className="flex h-[160px] items-center justify-center rounded-xl border border-th-border-subtle bg-th-bg-base/40 text-[11px] text-th-text-faint">
+        No new artists or tracks in this window.
+      </div>
+    );
+  }
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      className="h-[160px] w-full"
+    >
+      <defs>
+        <linearGradient id="discovery-area" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--th-accent)" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="var(--th-accent)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {bars.map((b, i) => (
+        <rect
+          key={i}
+          x={b.x}
+          y={H - PAD_Y - b.h}
+          width={b.w}
+          height={b.h}
+          fill="var(--th-accent)"
+          opacity="0.18"
+          rx="1"
+        />
+      ))}
+      <path d={artistArea} fill="url(#discovery-area)" />
+      <path
+        d={artistPath}
+        fill="none"
+        stroke="var(--th-accent)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d={trackPath}
+        fill="none"
+        stroke="rgba(255,255,255,0.45)"
+        strokeWidth="1.4"
+        strokeDasharray="3 3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx={dot.x} cy={dot.y} r="6" fill="var(--th-accent)" opacity="0.25" />
+      <circle cx={dot.x} cy={dot.y} r="3" fill="var(--th-accent)" />
+      <g transform={`translate(${dot.x - 4}, ${Math.max(dot.y - 8, 14)})`}>
+        <text
+          textAnchor="end"
+          className="fill-th-text-primary"
+          style={{ font: "bold 12px ui-sans-serif, system-ui" }}
+        >
+          {dot.label}
+        </text>
+      </g>
+    </svg>
   );
 }
 
@@ -781,36 +945,20 @@ function CoverArt({
 
 // ─── Top X tabs ────────────────────────────────────────────────────────────
 
-function TopTracksTab({
-  window,
-  source,
-}: {
-  window: StatsWindow;
-  source: StatsSource;
-}) {
+function TopTracksTab({ window }: { window: StatsWindow }) {
   const [items, setItems] = useState<TopTrack[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    setError(null);
     setItems([]);
-    const fetcher =
-      source === "listenbrainz"
-        ? getListenBrainzTopTracks
-        : source === "lastfm"
-          ? getLastfmUserTopTracks
-          : getTopTracks;
-    fetcher(window, 50)
+    getTopTracks(window, 50)
       .then(setItems)
-      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window, source]);
+  }, [window]);
   if (loading) return <Loader />;
-  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty={emptyCopy(source, "tracks")}
+      empty="No top tracks yet for this window."
       items={items.map((t, i) => ({
         key: `${t.trackId ?? `${t.title}|${t.artist}`}-${i}`,
         primary: t.title,
@@ -830,36 +978,20 @@ function TopTracksTab({
   );
 }
 
-function TopArtistsTab({
-  window,
-  source,
-}: {
-  window: StatsWindow;
-  source: StatsSource;
-}) {
+function TopArtistsTab({ window }: { window: StatsWindow }) {
   const [items, setItems] = useState<TopArtist[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    setError(null);
     setItems([]);
-    const fetcher =
-      source === "listenbrainz"
-        ? getListenBrainzTopArtists
-        : source === "lastfm"
-          ? getLastfmUserTopArtists
-          : getTopArtists;
-    fetcher(window, 50)
+    getTopArtists(window, 50)
       .then(setItems)
-      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window, source]);
+  }, [window]);
   if (loading) return <Loader />;
-  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty={emptyCopy(source, "artists")}
+      empty="No top artists yet for this window."
       items={items.map((a, i) => ({
         key: `${a.artist}-${i}`,
         primary: a.artist,
@@ -874,36 +1006,20 @@ function TopArtistsTab({
   );
 }
 
-function TopAlbumsTab({
-  window,
-  source,
-}: {
-  window: StatsWindow;
-  source: StatsSource;
-}) {
+function TopAlbumsTab({ window }: { window: StatsWindow }) {
   const [items, setItems] = useState<TopAlbum[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
-    setError(null);
     setItems([]);
-    const fetcher =
-      source === "listenbrainz"
-        ? getListenBrainzTopAlbums
-        : source === "lastfm"
-          ? getLastfmUserTopAlbums
-          : getTopAlbums;
-    fetcher(window, 50)
+    getTopAlbums(window, 50)
       .then(setItems)
-      .catch((e) => setError(remoteErrorMessage(source, e)))
       .finally(() => setLoading(false));
-  }, [window, source]);
+  }, [window]);
   if (loading) return <Loader />;
-  if (error) return <RemoteEmpty message={error} />;
   return (
     <RankedList
-      empty={emptyCopy(source, "albums")}
+      empty="No top albums yet for this window."
       items={items.map((a, i) => ({
         key: `${a.album}|${a.artist}-${i}`,
         primary: a.album,
@@ -937,14 +1053,18 @@ function heatColor(t: number): string {
   return `hsl(${hue.toFixed(0)} ${sat}% ${light.toFixed(0)}%)`;
 }
 
-function HeatmapTab({ window }: { window: StatsWindow }) {
+function PatternsTab({ window }: { window: StatsWindow }) {
   const [cells, setCells] = useState<HeatmapCell[]>([]);
+  const [hourly, setHourly] = useState<HourMinutes[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    getListeningHeatmap(window)
-      .then(setCells)
+    Promise.all([getListeningHeatmap(window), getHourMinutes(window)])
+      .then(([h, m]) => {
+        setCells(h);
+        setHourly(m);
+      })
       .finally(() => setLoading(false));
   }, [window]);
 
@@ -1017,38 +1137,206 @@ function HeatmapTab({ window }: { window: StatsWindow }) {
         />
       </div>
 
-      <div className="rounded-2xl border border-th-border-subtle bg-th-surface/60 p-4">
-        <div className="mb-3 flex items-center justify-between text-[11px] text-th-text-muted">
-          <span>Listening intensity by day × hour</span>
-          <Legend />
-        </div>
-        <div className="overflow-x-auto">
-          <div className="inline-grid min-w-full grid-cols-[auto_repeat(24,1fr)_auto] gap-[3px] text-[10px]">
-            <div />
-            {Array.from({ length: 24 }).map((_, h) => (
-              <div
-                key={h}
-                className="text-center font-medium text-th-text-faint"
-                style={{ minWidth: 22 }}
-              >
-                {h % 3 === 0 ? h : ""}
-              </div>
-            ))}
-            <div />
-            {DOW_LABELS.map((label, dow) => (
-              <HeatRow
-                key={dow}
-                label={label}
-                cells={grid[dow]}
-                max={max}
-                rowTotal={byDow[dow]}
-                rowMax={Math.max(...byDow)}
-                isPeakRow={dow === peak.dow}
-              />
-            ))}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
+        <div className="rounded-2xl border border-th-border-subtle bg-th-surface/60 p-4">
+          <div className="mb-3 flex items-center justify-between text-[11px] text-th-text-muted">
+            <span>Listening intensity by day × hour</span>
+            <Legend />
+          </div>
+          <div className="overflow-x-auto">
+            <div className="inline-grid min-w-full grid-cols-[auto_repeat(24,1fr)_auto] gap-[3px] text-[10px]">
+              <div />
+              {Array.from({ length: 24 }).map((_, h) => (
+                <div
+                  key={h}
+                  className="text-center font-medium text-th-text-faint"
+                  style={{ minWidth: 22 }}
+                >
+                  {h % 3 === 0 ? h : ""}
+                </div>
+              ))}
+              <div />
+              {DOW_LABELS.map((label, dow) => (
+                <HeatRow
+                  key={dow}
+                  label={label}
+                  cells={grid[dow]}
+                  max={max}
+                  rowTotal={byDow[dow]}
+                  rowMax={Math.max(...byDow)}
+                  isPeakRow={dow === peak.dow}
+                />
+              ))}
+            </div>
           </div>
         </div>
+
+        <HourClockCard hourly={hourly} />
       </div>
+    </div>
+  );
+}
+
+// ─── Hour clock (radial bar) ───────────────────────────────────────────────
+
+/**
+ * Radial 24-hour bar chart: each spoke is one hour of day, length =
+ * average minutes listened in that hour across the window. Distinct
+ * from the heatmap (which is dow × hour) — this collapses across days
+ * to answer "am I a morning, afternoon, evening, or late-night
+ * listener?". Midnight at the top, noon at the bottom.
+ */
+function HourClockCard({ hourly }: { hourly: HourMinutes[] }) {
+  const dense = useMemo(() => {
+    const out = Array(24).fill(0);
+    for (const h of hourly) {
+      if (h.hour >= 0 && h.hour < 24) out[h.hour] = h.minutes;
+    }
+    return out as number[];
+  }, [hourly]);
+
+  const max = Math.max(...dense, 1);
+  const total = dense.reduce((s, v) => s + v, 0);
+  const peakHour = dense.reduce(
+    (best, v, i) => (v > dense[best] ? i : best),
+    0,
+  );
+
+  // Hue ramps with hour-of-day so the wheel reads like a sundial:
+  // pre-dawn cool blues, midday warm, evening warm fades, late-night
+  // cool again. Constant lightness keeps the eye on bar length.
+  const hueFor = (h: number) => {
+    // Map 0..23 → 230° (deep blue, midnight) → 50° (golden, noon) → 320° (rose, 18h) → 230° (back to blue).
+    const t = h / 24;
+    return 230 + 360 * (Math.sin(2 * Math.PI * t - Math.PI / 2) * 0.45 + 0.45);
+  };
+
+  const cx = 100;
+  const cy = 100;
+  const rInner = 32;
+  const rOuter = 90;
+
+  return (
+    <div className="rounded-2xl border border-th-border-subtle bg-th-surface/60 p-4">
+      <div className="mb-3 flex items-center justify-between text-[11px] text-th-text-muted">
+        <span className="flex items-center gap-1.5">
+          <Sunrise size={12} />
+          Hour clock
+        </span>
+        <span className="tabular-nums">
+          peak {peakHour.toString().padStart(2, "0")}:00
+        </span>
+      </div>
+      {total === 0 ? (
+        <div className="flex h-[200px] items-center justify-center text-[11px] text-th-text-faint">
+          No hourly data yet.
+        </div>
+      ) : (
+        <div className="relative">
+          <svg viewBox="0 0 200 200" className="w-full">
+            {/* Hour marker rings */}
+            <circle
+              cx={cx}
+              cy={cy}
+              r={rOuter}
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.06"
+              strokeDasharray="2 4"
+              className="text-th-text-muted"
+            />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={rInner}
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.08"
+              className="text-th-text-muted"
+            />
+
+            {dense.map((v, h) => {
+              const angle = (h / 24) * Math.PI * 2 - Math.PI / 2; // 0h at top
+              const len = (v / max) * (rOuter - rInner);
+              const x1 = cx + Math.cos(angle) * rInner;
+              const y1 = cy + Math.sin(angle) * rInner;
+              const x2 = cx + Math.cos(angle) * (rInner + len);
+              const y2 = cy + Math.sin(angle) * (rInner + len);
+              return (
+                <line
+                  key={h}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={`hsl(${hueFor(h)} 75% 60%)`}
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  opacity={v === 0 ? 0.15 : 0.92}
+                />
+              );
+            })}
+
+            {/* Peak hour highlight ring */}
+            {(() => {
+              const angle = (peakHour / 24) * Math.PI * 2 - Math.PI / 2;
+              const x = cx + Math.cos(angle) * (rOuter + 4);
+              const y = cy + Math.sin(angle) * (rOuter + 4);
+              return (
+                <circle
+                  cx={x}
+                  cy={y}
+                  r="3"
+                  fill="var(--th-accent)"
+                  className="drop-shadow-[0_0_4px_var(--th-accent)]"
+                />
+              );
+            })()}
+
+            {/* Cardinal labels */}
+            {[
+              { h: 0, label: "0", x: cx, y: cy - rOuter - 8 },
+              { h: 6, label: "6", x: cx + rOuter + 8, y: cy + 3 },
+              { h: 12, label: "12", x: cx, y: cy + rOuter + 14 },
+              { h: 18, label: "18", x: cx - rOuter - 8, y: cy + 3 },
+            ].map((m) => (
+              <text
+                key={m.h}
+                x={m.x}
+                y={m.y}
+                textAnchor="middle"
+                className="fill-th-text-faint"
+                style={{ font: "600 9px ui-sans-serif, system-ui" }}
+              >
+                {m.label}
+              </text>
+            ))}
+
+            {/* Center label */}
+            <text
+              x={cx}
+              y={cy - 2}
+              textAnchor="middle"
+              className="fill-th-text-primary"
+              style={{ font: "800 16px ui-sans-serif, system-ui" }}
+            >
+              {formatDuration(total * 60)}
+            </text>
+            <text
+              x={cx}
+              y={cy + 12}
+              textAnchor="middle"
+              className="fill-th-text-faint"
+              style={{
+                font: "600 8px ui-sans-serif, system-ui",
+                letterSpacing: "0.15em",
+              }}
+            >
+              TOTAL
+            </text>
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
@@ -1140,32 +1428,6 @@ function Loader() {
   return (
     <div className="flex items-center justify-center py-16">
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-th-accent border-t-transparent" />
-    </div>
-  );
-}
-
-function remoteErrorMessage(source: StatsSource, err: unknown): string {
-  const raw = typeof err === "string" ? err : (err as Error)?.message ?? "";
-  if (raw.includes("not connected")) {
-    return source === "lastfm"
-      ? "Connect Last.fm in Sidebar → Scrobble to see your top items."
-      : "Connect ListenBrainz in Sidebar → Scrobble to see your top items.";
-  }
-  return raw || "Something went wrong fetching the remote stats.";
-}
-
-function emptyCopy(source: StatsSource, kind: string): string {
-  if (source === "local") return `No top ${kind} yet for this window.`;
-  return `No top ${kind} on ${
-    source === "lastfm" ? "Last.fm" : "ListenBrainz"
-  } for this window.`;
-}
-
-function RemoteEmpty({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-th-border-subtle py-16 text-center px-6">
-      <div className="text-[14px] font-bold text-th-text-primary">Heads up</div>
-      <div className="mt-1 text-[12px] text-th-text-muted">{message}</div>
     </div>
   );
 }

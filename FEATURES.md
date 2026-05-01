@@ -425,43 +425,99 @@ localStorage.removeItem("sone:lastfm-cache:v1")
 
 ---
 
-## 18. Stats source toggle — Local / ListenBrainz / Last.fm
+## 18. Last.fm history import + unified Stats (no source toggle)
 
-**What it is.** A second pill row in the Stats header lets you pivot
-the **Top Tracks / Top Artists / Top Albums** tabs between three data
-sources:
+**What it is.** The Stats page used to have a Local / ListenBrainz /
+Last.fm pill that switched the view between the local DB and live
+calls to the remote APIs. That's gone — replaced by a single unified
+view computed entirely from the local SQLite DB. Both ListenBrainz
+and Last.fm scrobbles are *imported* into that DB instead of being
+queried live.
 
-* **Local** — your own SQLite DB (default).
-* **ListenBrainz** — pulled live from your LB profile via
-  `/1/stats/user/{user}/top-recordings|top-artists|release-groups`.
-* **Last.fm** — pulled live via `user.getTopTracks|TopArtists|TopAlbums`.
+The piece that closes the loop is a **Last.fm history importer**,
+mirror of the existing ListenBrainz one. Connect Last.fm in
+Settings → Scrobbling and the connected card reveals an *Import
+Last.fm history* panel. Hit Start and the backend pages
+`user.getRecentTracks` (200 scrobbles per page) using the embedded
+API key — no session token needed because we only need read-only
+access to a public profile. Each page is converted into local
+`PlayRecord`s with `source: "lastfm"` and pushed through the same
+`bulk_import_plays` path the LB importer uses, so the dedup key
+`(started_at, lower(title), lower(artist))` quietly skips any row
+that already exists. That means: re-running is safe, and a track
+SONE played locally (and scrobbled to LFM) won't double-count when
+you import — the timestamps line up.
 
-The window selector (Week / Month / Year / All) maps onto each
-backend's idiom (LB `range`, LFM `period`). The same UI (medals,
-covers, MB chip, podium cards) renders all three sources — only the
-data feed changes.
+The walk stops on an empty page, three consecutive ≥95% duplicate
+pages, the API's reported `totalPages`, or a 250-page hard cap.
+Progress streams to the frontend on `import-lastfm-progress` so the
+panel shows `Page N / total · imported X · skipped Y dupes` live.
 
-**Overview** and **Heatmap** are still local-only because they need
-aggregates (`distinct_*`, daily minutes, day×hour) that the public
-remote APIs don't expose. The toggle disables the remote pills on
-those tabs and shows a tooltip explaining why.
+Because everything lives in the same DB, every existing aggregate
+(Overview totals, Top tracks/artists/albums, heatmap, the new hour
+clock + discovery curve) automatically includes imported history
+without any source-aware branching. The header badge now reads
+**Unified · Local + imports** instead of toggling.
 
-When the remote source isn't connected, the tab shows a friendly
-empty state telling you which provider to wire up in Settings →
-Scrobbling.
+**Files.** `src-tauri/src/scrobble/lastfm.rs::fetch_recent_tracks`
+(API call), `src-tauri/src/scrobble/mod.rs::import_lastfm_history`
+(walker + `bulk_import_plays`), `src-tauri/src/commands/scrobble.rs`
+(Tauri command), `src/api/stats.ts::importLastfmHistory`,
+`src/components/ScrobbleModal.tsx::LfmHistoryImport`.
 
-**Files.** `src-tauri/src/commands/scrobble.rs` (LB top-X),
-`src-tauri/src/commands/lastfm.rs` (LFM top-X),
-`src/api/stats.ts`, `src/components/StatsPage.tsx`
-(source pill + per-source fetcher).
-
-**How to use.** Stats → header pills →
-**Local | ListenBrainz | Last.fm**. Switch tabs to Top X and watch
-the same view re-render against the new source.
+**How to use.** Sidebar → Scrobble → connect Last.fm → in the
+connected card, *Import Last.fm history* → **Start**. Watch the page
+counter tick. When it finishes, every Stats tab includes those
+scrobbles next to your SONE-recorded plays.
 
 ---
 
-## 19. Heatmap colour ramp: red → yellow → green
+## 19. New Stats charts: hour clock + discovery curve
+
+**What it is.** Two new visualisations alongside the heatmap, both
+computed from the same unified local DB:
+
+* **Hour clock** (Patterns tab, next to the heatmap). A radial 24-h
+  bar chart. Each spoke is one hour of day, length = total minutes
+  listened in that hour across the window. Midnight at the top, noon
+  at the bottom. The colour ramp follows a sundial: deep blues in the
+  pre-dawn hours, golden tones around noon, rose-magenta in the
+  evening, back to blue at midnight. The bright accent dot on the rim
+  marks your peak hour, the centre prints the total. Distinct from
+  the heatmap (which is dow×hour) — this collapses across days to
+  answer *am I a morning, afternoon, evening or late-night listener?*
+  in one glance.
+* **Discovery curve** (Overview tab). A cumulative line of
+  *first-time encounters* — for each day in the window, count the
+  artists and tracks whose very first play in your entire local
+  history happened that day, then accumulate. Solid line = artists,
+  dashed = tracks, soft bars under = the per-day count of new
+  artists. A steep curve means you're exploring; a flat tail means
+  you're in your comfort zone. The dataset is densified to one row
+  per day so silent days flatten the curve visibly instead of being
+  hidden by the chart's interpolation.
+
+Both queries reuse the existing `recording_mbid` /
+`artist_mbid` / `release_group_mbid` enrichment to identify
+artists/tracks robustly across name drift.
+
+The "Heatmap" tab is renamed **Patterns** to reflect that it now
+holds both temporal-pattern charts.
+
+**Files.** `src-tauri/src/stats.rs` (`hour_minutes`,
+`discovery_curve`), `src-tauri/src/commands/stats.rs`
+(`get_hour_minutes`, `get_discovery_curve`),
+`src/api/stats.ts` (typed wrappers),
+`src/components/StatsPage.tsx` (`HourClockCard`, `DiscoveryCard`,
+`PatternsTab`).
+
+**How to use.** Stats → Overview to see the discovery curve, Stats →
+Patterns to see the heatmap + hour clock side by side. Both react to
+the Week / Month / Year / All window selector.
+
+---
+
+## 20. Heatmap colour ramp: red → yellow → green
 
 **What it is.** The day × hour heatmap got a stoplight-scale ramp:
 silent slots are near-empty, low-activity slots tint **red**, mid

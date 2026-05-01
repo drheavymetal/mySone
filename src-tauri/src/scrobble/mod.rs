@@ -606,25 +606,6 @@ impl ScrobbleManager {
         Arc::clone(&self.mb_lookup)
     }
 
-    /// Username of the connected ListenBrainz provider, if any. Used
-    /// by the remote-stats commands to know who to query.
-    pub async fn listenbrainz_username(&self) -> Option<String> {
-        let providers = self.providers.read().await;
-        let lb = providers
-            .iter()
-            .find(|p| p.name() == "listenbrainz" && p.is_authenticated())?;
-        lb.username().await
-    }
-
-    /// Username of the connected Last.fm provider, if any.
-    pub async fn lastfm_username(&self) -> Option<String> {
-        let providers = self.providers.read().await;
-        let lf = providers
-            .iter()
-            .find(|p| p.name() == "lastfm" && p.is_authenticated())?;
-        lf.username().await
-    }
-
     /// Backfill the local stats DB with a user's ListenBrainz history.
     ///
     /// The user must be connected to ListenBrainz (the username is taken
@@ -751,6 +732,146 @@ impl ScrobbleManager {
                 break;
             }
             max_ts = Some(oldest_in_page - 1);
+            tokio::time::sleep(Duration::from_millis(350)).await;
+        }
+
+        Ok(ImportResult {
+            imported,
+            skipped,
+            pages,
+            username,
+        })
+    }
+
+    /// Backfill the local stats DB with a user's Last.fm history.
+    ///
+    /// Same shape as `import_listenbrainz_history`: paginates the public
+    /// `user.getRecentTracks` endpoint newest-first using the embedded
+    /// API key (no session required for public profiles), converts each
+    /// scrobble to a `PlayRecord`, and dedups against existing rows
+    /// inside `bulk_import_plays`. Progress is emitted on the
+    /// `import-lastfm-progress` channel after every page.
+    ///
+    /// The walk stops on:
+    ///  * an empty page,
+    ///  * three consecutive pages where ≥95% of rows were duplicates,
+    ///  * the page index passing the API's reported `totalPages`,
+    ///  * the per-call `MAX_PAGES` cap.
+    pub async fn import_lastfm_history(
+        &self,
+        since_unix: Option<i64>,
+    ) -> Result<ImportResult, SoneError> {
+        if !crate::embedded_lastfm::has_stream_keys() {
+            return Err(SoneError::Scrobble("Last.fm not configured".into()));
+        }
+        let username: String = {
+            let providers = self.providers.read().await;
+            let provider = providers
+                .iter()
+                .find(|p| p.name() == "lastfm" && p.is_authenticated())
+                .ok_or_else(|| SoneError::Scrobble("lastfm: not connected".into()))?;
+            provider
+                .username()
+                .await
+                .ok_or_else(|| SoneError::Scrobble("lastfm: no username".into()))?
+        };
+        let api_key = crate::embedded_lastfm::stream_key_a();
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|e| SoneError::Scrobble(format!("import client build failed: {e}")))?;
+
+        let from_ts = since_unix.filter(|t| *t > 0);
+        let mut imported: u64 = 0;
+        let mut skipped: u64 = 0;
+        let mut pages: u32 = 0;
+        let mut consecutive_dupes: u32 = 0;
+        const PAGE_SIZE: u32 = 200;
+        const MAX_PAGES: u32 = 250;
+
+        for page_idx in 1..=MAX_PAGES {
+            let page = lastfm::fetch_recent_tracks(
+                &client,
+                &api_key,
+                &username,
+                from_ts,
+                page_idx,
+                PAGE_SIZE,
+            )
+            .await?;
+            pages = page_idx;
+
+            if page.tracks.is_empty() {
+                break;
+            }
+
+            let oldest_in_page = page
+                .tracks
+                .iter()
+                .map(|t| t.listened_at)
+                .min()
+                .unwrap_or(0);
+
+            // Last.fm doesn't return duration. 180 s is the same default
+            // the LB importer uses — gives reasonable listened_secs for
+            // aggregate stats without making API calls per row.
+            let dur: u32 = 180;
+            let records: Vec<PlayRecord> = page
+                .tracks
+                .iter()
+                .map(|t| PlayRecord {
+                    started_at: t.listened_at,
+                    finished_at: t.listened_at + dur as i64,
+                    track_id: None,
+                    title: t.track_name.as_str(),
+                    artist: t.artist_name.as_str(),
+                    album: t.album_name.as_deref(),
+                    album_artist: None,
+                    duration_secs: dur,
+                    listened_secs: dur,
+                    completed: true,
+                    isrc: None,
+                    chosen_by_user: true,
+                    source: "lastfm",
+                    recording_mbid: t.recording_mbid.as_deref(),
+                    release_group_mbid: None,
+                    artist_mbid: None,
+                })
+                .collect();
+
+            let res = self
+                .stats
+                .bulk_import_plays(&records)
+                .map_err(|e| SoneError::Scrobble(format!("import db error: {e}")))?;
+            imported += res.imported;
+            skipped += res.skipped;
+
+            let _ = self.app_handle.emit(
+                "import-lastfm-progress",
+                serde_json::json!({
+                    "page": pages,
+                    "totalPages": page.total_pages,
+                    "imported": imported,
+                    "skipped": skipped,
+                    "oldestTs": oldest_in_page,
+                }),
+            );
+
+            let total = res.imported + res.skipped;
+            if total > 0 && res.skipped * 100 / total >= 95 {
+                consecutive_dupes += 1;
+                if consecutive_dupes >= 3 {
+                    log::info!("[lfm-import] stopping — three consecutive duplicate pages");
+                    break;
+                }
+            } else {
+                consecutive_dupes = 0;
+            }
+
+            if page.total_pages > 0 && page_idx >= page.total_pages {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
 

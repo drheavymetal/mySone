@@ -168,6 +168,30 @@ pub struct DailyMinutes {
     pub minutes: u64,
 }
 
+/// Listening minutes aggregated per hour-of-day across the entire window.
+/// Powers the radial "hour clock" chart — answers "am I a morning or
+/// late-night listener?" in one glance, distinct from the dow×hour
+/// heatmap which shows the weekly pattern.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourMinutes {
+    pub hour: u8,
+    pub minutes: u64,
+}
+
+/// One day in the discovery curve: how many *brand-new* artists the
+/// user heard for the first time on that day (relative to the entire
+/// local history, not just the window). Used by the frontend to draw a
+/// cumulative "exploration rate" line.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryPoint {
+    /// `YYYY-MM-DD` in local timezone.
+    pub date: String,
+    pub new_artists: u64,
+    pub new_tracks: u64,
+}
+
 pub struct StatsDb {
     conn: Mutex<Connection>,
 }
@@ -543,6 +567,100 @@ impl StatsDb {
                 Ok(DailyMinutes {
                     date: row.get(0)?,
                     minutes: row.get::<_, i64>(1)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Listening minutes per hour-of-day across all days in the window.
+    /// Returns up to 24 rows; hours with no listening are simply absent
+    /// (the frontend fills in zeros so the radial chart has 24 slices).
+    pub fn hour_minutes(&self, window: StatsWindow) -> rusqlite::Result<Vec<HourMinutes>> {
+        let now = crate::now_secs() as i64;
+        let since = window.since(now);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST(strftime('%H', started_at, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+                SUM(listened_secs) / 60
+             FROM plays
+             WHERE started_at >= ?1
+             GROUP BY hour
+             ORDER BY hour",
+        )?;
+        let rows = stmt
+            .query_map(params![since], |row| {
+                Ok(HourMinutes {
+                    hour: row.get::<_, i64>(0)? as u8,
+                    minutes: row.get::<_, i64>(1)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Per-day count of artists/tracks heard for the *first time ever*
+    /// (across the entire local DB), restricted to days inside the
+    /// window. Tracks the user's exploration vs. comfort-zone tendency.
+    /// "New" = the very first appearance of that artist/recording in
+    /// the user's history; later replays in the same window don't count.
+    /// The frontend turns this into a cumulative line chart.
+    pub fn discovery_curve(
+        &self,
+        window: StatsWindow,
+    ) -> rusqlite::Result<Vec<DiscoveryPoint>> {
+        let now = crate::now_secs() as i64;
+        let since = window.since(now);
+        let conn = self.conn.lock().unwrap();
+
+        let mut stmt = conn.prepare(
+            "WITH artist_first AS (
+                SELECT
+                    COALESCE(artist_mbid, lower(artist)) AS akey,
+                    MIN(started_at) AS first_at
+                FROM plays
+                GROUP BY akey
+             ),
+             track_first AS (
+                SELECT
+                    COALESCE(recording_mbid, lower(title) || '|' || lower(artist)) AS tkey,
+                    MIN(started_at) AS first_at
+                FROM plays
+                GROUP BY tkey
+             ),
+             new_artists AS (
+                SELECT date(first_at, 'unixepoch', 'localtime') AS day, COUNT(*) AS n
+                FROM artist_first
+                WHERE first_at >= ?1
+                GROUP BY day
+             ),
+             new_tracks AS (
+                SELECT date(first_at, 'unixepoch', 'localtime') AS day, COUNT(*) AS n
+                FROM track_first
+                WHERE first_at >= ?1
+                GROUP BY day
+             ),
+             days AS (
+                SELECT day FROM new_artists
+                UNION
+                SELECT day FROM new_tracks
+             )
+             SELECT
+                days.day,
+                COALESCE(new_artists.n, 0),
+                COALESCE(new_tracks.n, 0)
+             FROM days
+             LEFT JOIN new_artists ON new_artists.day = days.day
+             LEFT JOIN new_tracks  ON new_tracks.day  = days.day
+             ORDER BY days.day",
+        )?;
+        let rows = stmt
+            .query_map(params![since], |row| {
+                Ok(DiscoveryPoint {
+                    date: row.get(0)?,
+                    new_artists: row.get::<_, i64>(1)? as u64,
+                    new_tracks: row.get::<_, i64>(2)? as u64,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

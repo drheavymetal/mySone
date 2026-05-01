@@ -49,6 +49,23 @@ export interface DailyMinutes {
   minutes: number;
 }
 
+export interface HourMinutes {
+  /** 0–23 in local time. */
+  hour: number;
+  minutes: number;
+}
+
+export interface DiscoveryPoint {
+  /** YYYY-MM-DD in local time */
+  date: string;
+  /** Artists heard for the very first time (across the whole local DB)
+   *  on this day. */
+  newArtists: number;
+  /** Tracks heard for the very first time (across the whole local DB)
+   *  on this day. */
+  newTracks: number;
+}
+
 export async function getStatsOverview(
   window: StatsWindow,
 ): Promise<StatsOverview> {
@@ -88,77 +105,59 @@ export async function getDailyMinutes(
   return invoke<DailyMinutes[]>("get_daily_minutes", { window });
 }
 
-// ─── ListenBrainz history import ──────────────────────────────────────────
+export async function getHourMinutes(
+  window: StatsWindow,
+): Promise<HourMinutes[]> {
+  return invoke<HourMinutes[]>("get_hour_minutes", { window });
+}
 
-export interface LbImportResult {
+export async function getDiscoveryCurve(
+  window: StatsWindow,
+): Promise<DiscoveryPoint[]> {
+  return invoke<DiscoveryPoint[]>("get_discovery_curve", { window });
+}
+
+// ─── History import (shared shape: ListenBrainz + Last.fm) ────────────────
+
+export interface ImportResult {
   imported: number;
   skipped: number;
   pages: number;
   username: string;
 }
 
-export interface LbImportProgress {
+export interface ImportProgress {
   page: number;
   imported: number;
   skipped: number;
   oldestTs: number;
+  /** Only present for Last.fm — total pages reported by the API. */
+  totalPages?: number;
 }
+
+/** Backwards-compat aliases — the existing modal still imports these. */
+export type LbImportResult = ImportResult;
+export type LbImportProgress = ImportProgress;
 
 /** Trigger a ListenBrainz history backfill. Streams progress via the
  * `import-listenbrainz-progress` event. The user must already be
  * connected to ListenBrainz. */
 export async function importListenBrainzHistory(
   sinceUnix?: number,
-): Promise<LbImportResult> {
-  return invoke<LbImportResult>("import_listenbrainz_history", {
+): Promise<ImportResult> {
+  return invoke<ImportResult>("import_listenbrainz_history", {
     sinceUnix: sinceUnix ?? null,
   });
 }
 
-// ─── Remote stats sources (ListenBrainz + Last.fm) ────────────────────────
-
-export type StatsSource = "local" | "listenbrainz" | "lastfm";
-
-/** Top tracks from ListenBrainz for the connected user. */
-export async function getListenBrainzTopTracks(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopTrack[]> {
-  return invoke<TopTrack[]>("get_listenbrainz_top_tracks", { window, limit });
-}
-
-export async function getListenBrainzTopArtists(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopArtist[]> {
-  return invoke<TopArtist[]>("get_listenbrainz_top_artists", { window, limit });
-}
-
-export async function getListenBrainzTopAlbums(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopAlbum[]> {
-  return invoke<TopAlbum[]>("get_listenbrainz_top_albums", { window, limit });
-}
-
-/** Top tracks from Last.fm for the connected user. */
-export async function getLastfmUserTopTracks(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopTrack[]> {
-  return invoke<TopTrack[]>("get_lastfm_user_top_tracks", { window, limit });
-}
-
-export async function getLastfmUserTopArtists(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopArtist[]> {
-  return invoke<TopArtist[]>("get_lastfm_user_top_artists", { window, limit });
-}
-
-export async function getLastfmUserTopAlbums(
-  window: StatsWindow,
-  limit: number,
-): Promise<TopAlbum[]> {
-  return invoke<TopAlbum[]>("get_lastfm_user_top_albums", { window, limit });
+/** Trigger a Last.fm history backfill. Streams progress via the
+ * `import-lastfm-progress` event. The user must already be connected
+ * to Last.fm; the import uses the embedded API key + their public
+ * username (no session token needed). */
+export async function importLastfmHistory(
+  sinceUnix?: number,
+): Promise<ImportResult> {
+  return invoke<ImportResult>("import_lastfm_history", {
+    sinceUnix: sinceUnix ?? null,
+  });
 }

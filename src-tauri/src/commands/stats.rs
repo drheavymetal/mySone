@@ -1,7 +1,8 @@
 use tauri::State;
 
 use crate::stats::{
-    DailyMinutes, HeatmapCell, StatsOverview, StatsWindow, TopAlbum, TopArtist, TopTrack,
+    DailyMinutes, DiscoveryPoint, HeatmapCell, HourMinutes, StatsOverview, StatsWindow, TopAlbum,
+    TopArtist, TopTrack,
 };
 use crate::{AppState, SoneError};
 
@@ -58,4 +59,20 @@ pub fn get_daily_minutes(
     window: StatsWindow,
 ) -> Result<Vec<DailyMinutes>, SoneError> {
     map_err(state.stats.daily_minutes(window))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_hour_minutes(
+    state: State<'_, AppState>,
+    window: StatsWindow,
+) -> Result<Vec<HourMinutes>, SoneError> {
+    map_err(state.stats.hour_minutes(window))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_discovery_curve(
+    state: State<'_, AppState>,
+    window: StatsWindow,
+) -> Result<Vec<DiscoveryPoint>, SoneError> {
+    map_err(state.stats.discovery_curve(window))
 }
