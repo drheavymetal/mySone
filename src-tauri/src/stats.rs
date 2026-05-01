@@ -86,6 +86,17 @@ pub struct PlayRecord<'a> {
     /// `"lastfm"` if/when we wire that up. Stored so the UI can tell
     /// imported history from native plays.
     pub source: &'a str,
+    /// MusicBrainz recording MBID resolved at play time, when available.
+    /// Used by stats queries to dedupe "same recording, different
+    /// release" splits caused by name-matching.
+    pub recording_mbid: Option<&'a str>,
+    /// MusicBrainz release-group MBID — the album as a concept, not a
+    /// specific edition. Lets stats group "Original / Remaster /
+    /// Anniversary" under the same album row.
+    pub release_group_mbid: Option<&'a str>,
+    /// MusicBrainz artist MBID. Lets stats collapse "The Beatles" and
+    /// "Beatles" (or any other casing/punctuation drift) into one row.
+    pub artist_mbid: Option<&'a str>,
 }
 
 /// Result of a bulk import: how many rows were inserted vs. skipped as
@@ -181,21 +192,40 @@ impl StatsDb {
     /// Idempotent schema upgrades. Adds columns the original schema did
     /// not have, on installations that pre-date them.
     fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-        let has_source: bool = conn
-            .query_row(
-                "SELECT 1 FROM pragma_table_info('plays') WHERE name = 'source'",
-                [],
-                |_| Ok(true),
-            )
-            .optional()?
-            .unwrap_or(false);
-        if !has_source {
-            conn.execute(
+        for (col, ddl) in [
+            (
+                "source",
                 "ALTER TABLE plays ADD COLUMN source TEXT NOT NULL DEFAULT 'local'",
-                [],
-            )?;
-            log::info!("[stats] migrated: added source column");
+            ),
+            (
+                "recording_mbid",
+                "ALTER TABLE plays ADD COLUMN recording_mbid TEXT",
+            ),
+            (
+                "release_group_mbid",
+                "ALTER TABLE plays ADD COLUMN release_group_mbid TEXT",
+            ),
+            ("artist_mbid", "ALTER TABLE plays ADD COLUMN artist_mbid TEXT"),
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM pragma_table_info('plays') WHERE name = ?1",
+                    [col],
+                    |_| Ok(true),
+                )
+                .optional()?
+                .unwrap_or(false);
+            if !exists {
+                conn.execute(ddl, [])?;
+                log::info!("[stats] migrated: added {col} column");
+            }
         }
+        // Indexes that pay off once MBIDs land in the table.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_plays_recording_mbid ON plays(recording_mbid);
+             CREATE INDEX IF NOT EXISTS idx_plays_artist_mbid    ON plays(artist_mbid);
+             CREATE INDEX IF NOT EXISTS idx_plays_rg_mbid        ON plays(release_group_mbid);",
+        )?;
         Ok(())
     }
 
@@ -208,8 +238,10 @@ impl StatsDb {
             "INSERT INTO plays (
                 started_at, finished_at, track_id, title, artist, album,
                 album_artist, duration_secs, listened_secs, completed,
-                isrc, chosen_by_user, source
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                isrc, chosen_by_user, source,
+                recording_mbid, release_group_mbid, artist_mbid
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                       ?13, ?14, ?15, ?16)",
             params![
                 p.started_at,
                 p.finished_at,
@@ -224,6 +256,9 @@ impl StatsDb {
                 p.isrc,
                 p.chosen_by_user as i32,
                 p.source,
+                p.recording_mbid,
+                p.release_group_mbid,
+                p.artist_mbid,
             ],
         )?;
         Ok(())
@@ -272,8 +307,10 @@ impl StatsDb {
                 "INSERT INTO plays (
                     started_at, finished_at, track_id, title, artist, album,
                     album_artist, duration_secs, listened_secs, completed,
-                    isrc, chosen_by_user, source
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    isrc, chosen_by_user, source,
+                    recording_mbid, release_group_mbid, artist_mbid
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                           ?13, ?14, ?15, ?16)",
             )?;
             for r in records {
                 let key = (
@@ -299,6 +336,9 @@ impl StatsDb {
                     r.isrc,
                     r.chosen_by_user as i32,
                     r.source,
+                    r.recording_mbid,
+                    r.release_group_mbid,
+                    r.artist_mbid,
                 ])?;
                 existing.insert(key);
                 imported += 1;
@@ -327,9 +367,15 @@ impl StatsDb {
                     COUNT(*),
                     COALESCE(SUM(completed), 0),
                     COALESCE(SUM(listened_secs), 0),
-                    COUNT(DISTINCT COALESCE(track_id, title || '|' || artist)),
-                    COUNT(DISTINCT artist),
-                    COUNT(DISTINCT COALESCE(album, '') || '|' || artist)
+                    COUNT(DISTINCT COALESCE(
+                        recording_mbid,
+                        lower(title) || '|' || lower(artist)
+                    )),
+                    COUNT(DISTINCT COALESCE(artist_mbid, lower(artist))),
+                    COUNT(DISTINCT COALESCE(
+                        release_group_mbid,
+                        lower(COALESCE(album, '')) || '|' || lower(artist)
+                    ))
                  FROM plays WHERE started_at >= ?1",
                 params![since],
                 |row| {
@@ -352,13 +398,20 @@ impl StatsDb {
         let now = crate::now_secs() as i64;
         let since = window.since(now);
         let conn = self.conn.lock().unwrap();
+        // Group by recording_mbid when available, otherwise fall back to a
+        // case-insensitive title|artist key (avoids splitting "The Beatles"
+        // and "Beatles" into separate rows). Use MAX(...) for display-level
+        // fields so any non-null value bubbles up across the merged rows.
         let mut stmt = conn.prepare(
             "SELECT
-                track_id, title, artist, MAX(album),
+                MAX(track_id), MAX(title), MAX(artist), MAX(album),
                 COUNT(*) AS plays, SUM(listened_secs)
              FROM plays
              WHERE started_at >= ?1 AND completed = 1
-             GROUP BY COALESCE(track_id, title || '|' || artist)
+             GROUP BY COALESCE(
+                recording_mbid,
+                lower(title) || '|' || lower(artist)
+             )
              ORDER BY plays DESC, listened_secs DESC
              LIMIT ?2",
         )?;
@@ -381,14 +434,20 @@ impl StatsDb {
         let now = crate::now_secs() as i64;
         let since = window.since(now);
         let conn = self.conn.lock().unwrap();
+        // Group by artist_mbid when present, fall back to lowercased name.
+        // The display name comes from MAX(artist) so the canonical
+        // capitalisation seen in any row wins.
         let mut stmt = conn.prepare(
-            "SELECT artist,
+            "SELECT MAX(artist),
                     COUNT(*) AS plays,
                     SUM(listened_secs),
-                    COUNT(DISTINCT COALESCE(track_id, title || '|' || artist))
+                    COUNT(DISTINCT COALESCE(
+                        recording_mbid,
+                        lower(title) || '|' || lower(artist)
+                    ))
              FROM plays
              WHERE started_at >= ?1 AND completed = 1
-             GROUP BY artist
+             GROUP BY COALESCE(artist_mbid, lower(artist))
              ORDER BY plays DESC, listened_secs DESC
              LIMIT ?2",
         )?;
@@ -409,13 +468,19 @@ impl StatsDb {
         let now = crate::now_secs() as i64;
         let since = window.since(now);
         let conn = self.conn.lock().unwrap();
+        // Group by release_group_mbid when present so reissues / remasters
+        // collapse onto the canonical album row.
         let mut stmt = conn.prepare(
-            "SELECT album, artist,
+            "SELECT MAX(album), MAX(artist),
                     COUNT(*) AS plays,
                     SUM(listened_secs)
              FROM plays
-             WHERE started_at >= ?1 AND completed = 1 AND album IS NOT NULL AND album <> ''
-             GROUP BY album, artist
+             WHERE started_at >= ?1 AND completed = 1
+                   AND album IS NOT NULL AND album <> ''
+             GROUP BY COALESCE(
+                 release_group_mbid,
+                 lower(album) || '|' || lower(artist)
+             )
              ORDER BY plays DESC, listened_secs DESC
              LIMIT ?2",
         )?;

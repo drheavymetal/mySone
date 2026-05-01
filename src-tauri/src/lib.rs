@@ -903,6 +903,8 @@ pub fn run() {
             commands::scrobble::complete_audioscrobbler_auth,
             commands::scrobble::disconnect_provider,
             commands::scrobble::import_listenbrainz_history,
+            commands::musicbrainz::lookup_album_cover_caa,
+            commands::musicbrainz::get_mb_track_details,
             // utility
             commands::utility::get_image_bytes,
             commands::utility::get_cache_stats,

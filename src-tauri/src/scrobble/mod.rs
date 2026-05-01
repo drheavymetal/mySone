@@ -40,6 +40,10 @@ pub struct ScrobbleTrack {
     pub track_id: Option<u64>,
     #[serde(default)]
     pub recording_mbid: Option<String>,
+    #[serde(default)]
+    pub release_group_mbid: Option<String>,
+    #[serde(default)]
+    pub artist_mbid: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -199,6 +203,9 @@ impl ScrobbleManager {
             isrc: p.track.isrc.as_deref(),
             chosen_by_user: p.track.chosen_by_user,
             source: "local",
+            recording_mbid: p.track.recording_mbid.as_deref(),
+            release_group_mbid: p.track.release_group_mbid.as_deref(),
+            artist_mbid: p.track.artist_mbid.as_deref(),
         };
         if let Err(e) = self.stats.record_play(&record) {
             log::warn!("[stats] record_play failed: {e}");
@@ -283,25 +290,68 @@ impl ScrobbleManager {
             self.fire_now_playing(&track),
         );
 
-        // 3. Spawn fire-and-forget MBID lookup (only if we have ISRC + track_id for guard)
-        let isrc = track.isrc.clone();
+        // 3. Spawn fire-and-forget MBID lookup. Two sources, merged:
+        //    - ISRC (when track has one): authoritative for recording_mbid.
+        //    - Name search: gives us release_group_mbid + artist_mbid the
+        //      ISRC endpoint doesn't return, plus a recording_mbid
+        //      fallback when ISRC is missing or unmatched.
+        //    We guard the write by track_id (if present) or by the
+        //    `(title, artist)` pair so a stale lookup doesn't bleed into
+        //    a freshly-started track.
         let track_name = track.track.clone();
         let artist_name = track.artist.clone();
+        let isrc = track.isrc.clone();
         let expected_id = track.track_id;
-        if let (Some(isrc), Some(expected_id)) = (isrc, expected_id) {
-            let mb = Arc::clone(&self.mb_lookup);
-            let ct = Arc::clone(&self.current_track);
-            tokio::spawn(async move {
-                if let Some(mbid) = mb.lookup_isrc(&isrc, &track_name, &artist_name).await {
-                    let mut current = ct.lock().await;
-                    if let Some(ref mut playback) = *current {
-                        if playback.track.track_id == Some(expected_id) {
-                            playback.track.recording_mbid = Some(mbid);
-                        }
+        let mb = Arc::clone(&self.mb_lookup);
+        let ct = Arc::clone(&self.current_track);
+        tokio::spawn(async move {
+            // Run ISRC and name lookups in parallel — they share a
+            // rate-limit mutex internally, so ordering is enforced there.
+            let isrc_fut = async {
+                if let Some(ref code) = isrc {
+                    mb.lookup_isrc(code, &track_name, &artist_name).await
+                } else {
+                    None
+                }
+            };
+            let name_fut = mb.lookup_by_name(&track_name, &artist_name);
+            let (recording_from_isrc, name_resolved) = tokio::join!(isrc_fut, name_fut);
+
+            let recording_mbid = recording_from_isrc
+                .or_else(|| name_resolved.as_ref().and_then(|r| r.recording_mbid.clone()));
+            let release_group_mbid =
+                name_resolved.as_ref().and_then(|r| r.release_group_mbid.clone());
+            let artist_mbid = name_resolved.as_ref().and_then(|r| r.artist_mbid.clone());
+
+            if recording_mbid.is_none()
+                && release_group_mbid.is_none()
+                && artist_mbid.is_none()
+            {
+                return;
+            }
+
+            let mut current = ct.lock().await;
+            if let Some(ref mut playback) = *current {
+                let same_track = match expected_id {
+                    Some(id) => playback.track.track_id == Some(id),
+                    None => {
+                        playback.track.track == track_name
+                            && playback.track.artist == artist_name
+                    }
+                };
+                if same_track {
+                    if let Some(v) = recording_mbid {
+                        playback.track.recording_mbid = Some(v);
+                    }
+                    if let Some(v) = release_group_mbid {
+                        playback.track.release_group_mbid = Some(v);
+                    }
+                    if let Some(v) = artist_mbid {
+                        playback.track.artist_mbid = Some(v);
                     }
                 }
-            });
-        }
+            }
+        });
     }
 
     pub async fn on_pause(&self) {
@@ -549,6 +599,13 @@ impl ScrobbleManager {
         self.queue.len().await
     }
 
+    /// Expose the MB lookup helper to other modules (e.g. tauri command
+    /// handlers that want to resolve covers or fetch full recording
+    /// details without duplicating the cache + rate-limit machinery).
+    pub fn mb_lookup(&self) -> Arc<musicbrainz::MusicBrainzLookup> {
+        Arc::clone(&self.mb_lookup)
+    }
+
     /// Backfill the local stats DB with a user's ListenBrainz history.
     ///
     /// The user must be connected to ListenBrainz (the username is taken
@@ -636,6 +693,9 @@ impl ScrobbleManager {
                         isrc: l.isrc.as_deref(),
                         chosen_by_user: true,
                         source: "listenbrainz",
+                        recording_mbid: l.recording_mbid.as_deref(),
+                        release_group_mbid: None,
+                        artist_mbid: None,
                     }
                 })
                 .collect();

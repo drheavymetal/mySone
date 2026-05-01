@@ -133,6 +133,29 @@ async function searchOnce(
   }
 }
 
+interface CaaCover {
+  url: string;
+  releaseGroupMbid: string;
+}
+
+/** Cover Art Archive fallback for albums that TIDAL doesn't have a
+ * cover for (rare releases, bootlegs, regional editions). The backend
+ * resolves the release-group MBID via MusicBrainz and probes CAA. */
+async function caaAlbumCover(
+  album: string,
+  artist: string,
+): Promise<string | null> {
+  try {
+    const res = await invoke<CaaCover | null>("lookup_album_cover_caa", {
+      album,
+      artist,
+    });
+    return res?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function trackCoverByIdOrSearch(
   trackId: number | null,
   title: string,
@@ -183,7 +206,14 @@ export async function getAlbumCover(
   const k = keyOf("album", album, artist);
   const cached = readCache(k);
   if (cached) return cached.raw;
-  return dedupe(k, () => searchOnce(`${album} ${artist}`, "album"));
+  return dedupe(k, async () => {
+    const tidal = await searchOnce(`${album} ${artist}`, "album");
+    if (tidal) return tidal;
+    // Fallback for albums TIDAL doesn't index — Cover Art Archive via
+    // MusicBrainz. Returns a full https URL (not a TIDAL UUID), which
+    // `getTidalImageUrl` will pass through as-is.
+    return caaAlbumCover(album, artist);
+  });
 }
 
 export async function getArtistPicture(artist: string): Promise<string | null> {
@@ -191,4 +221,44 @@ export async function getArtistPicture(artist: string): Promise<string | null> {
   const cached = readCache(k);
   if (cached) return cached.raw;
   return dedupe(k, () => searchOnce(artist, "artist"));
+}
+
+// ─── MusicBrainz track details ────────────────────────────────────────────
+
+export interface MbTrackCredit {
+  artistName: string;
+  artistMbid?: string;
+  /** Role string from MB: "primary" | "writer" | "composer" | "vocals" | … */
+  role: string;
+}
+
+export interface MbTrackTag {
+  name: string;
+  count: number;
+}
+
+export interface MbTrackUrl {
+  /** MB relation type: "wikipedia" | "discogs" | "allmusic" | … */
+  kind: string;
+  url: string;
+}
+
+export interface MbTrackDetails {
+  recordingMbid?: string;
+  artistMbid?: string;
+  releaseGroupMbid?: string;
+  disambiguation?: string;
+  firstReleaseYear?: number;
+  credits: MbTrackCredit[];
+  tags: MbTrackTag[];
+  urls: MbTrackUrl[];
+}
+
+/** Resolve MBIDs by name and pull credits/tags/urls from MusicBrainz.
+ * Best-effort: returns an empty-shaped object if MB has no entry. */
+export async function getMbTrackDetails(
+  title: string,
+  artist: string,
+): Promise<MbTrackDetails> {
+  return invoke<MbTrackDetails>("get_mb_track_details", { title, artist });
 }

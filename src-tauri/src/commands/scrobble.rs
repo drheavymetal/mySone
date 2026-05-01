@@ -48,6 +48,8 @@ pub async fn notify_track_started(
         timestamp: crate::now_secs() as i64,
         chosen_by_user: payload.chosen_by_user,
         isrc: payload.isrc,
+        release_group_mbid: None,
+        artist_mbid: None,
         track_id: payload.track_id,
         recording_mbid: None,
     };

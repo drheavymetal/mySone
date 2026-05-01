@@ -11,7 +11,13 @@ import {
   ListPlus,
   GripVertical,
   Maximize2,
+  ExternalLink,
 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  getMbTrackDetails,
+  type MbTrackDetails,
+} from "../api/coverLookup";
 import ExplicitBadge from "./ExplicitBadge";
 import { parseLrc, type LrcLine } from "../lib/lrc";
 import {
@@ -1156,6 +1162,8 @@ const CreditsTab = memo(function CreditsTab() {
   const [creditsError, setCreditsError] = useState<string | null>(null);
   const [bio, setBio] = useState<string | null>(null);
   const [bioLoading, setBioLoading] = useState(false);
+  const [mb, setMb] = useState<MbTrackDetails | null>(null);
+  const [mbLoading, setMbLoading] = useState(false);
 
   useEffect(() => {
     if (!currentTrack) return;
@@ -1176,6 +1184,34 @@ const CreditsTab = memo(function CreditsTab() {
         if (active) setCreditsLoading(false);
       });
 
+    return () => {
+      active = false;
+    };
+  }, [currentTrack?.id]);
+
+  // MusicBrainz enrichment — fires after the basic credits load so it
+  // doesn't compete for the first paint. Fail-soft: empty result just
+  // means nothing extra renders.
+  useEffect(() => {
+    if (!currentTrack) {
+      setMb(null);
+      return;
+    }
+    let active = true;
+    setMbLoading(true);
+    setMb(null);
+    const title = getTrackDisplayTitle(currentTrack);
+    const artist = getTrackArtistDisplay(currentTrack);
+    getMbTrackDetails(title, artist)
+      .then((res) => {
+        if (active) setMb(res);
+      })
+      .catch(() => {
+        if (active) setMb(null);
+      })
+      .finally(() => {
+        if (active) setMbLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -1290,9 +1326,143 @@ const CreditsTab = memo(function CreditsTab() {
           />
         </div>
       )}
+
+      <MusicBrainzSection mb={mb} loading={mbLoading} />
     </div>
   );
 });
+
+/**
+ * Renders the MusicBrainz-sourced extras (writer/composer credits TIDAL
+ * doesn't expose, community tags, external links). Hidden entirely when
+ * MB has nothing to add for the current track.
+ */
+function MusicBrainzSection({
+  mb,
+  loading,
+}: {
+  mb: MbTrackDetails | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 pt-6 mt-2">
+        <SkeletonBar className="h-3 w-32" />
+        <SkeletonBar className="h-4 w-full" />
+      </div>
+    );
+  }
+  if (!mb) return null;
+
+  // Skip the "primary" entries — those are already rendered by TIDAL
+  // credits. We only show MB rows that bring new information.
+  const extraCredits = mb.credits.filter(
+    (c) => c.role !== "primary" && c.role !== "performer",
+  );
+  const hasAnything =
+    extraCredits.length > 0 ||
+    mb.tags.length > 0 ||
+    mb.urls.length > 0 ||
+    mb.recordingMbid;
+  if (!hasAnything) return null;
+
+  return (
+    <div className="flex flex-col pt-6 mt-2">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[16px] font-bold text-th-text-primary">
+          MusicBrainz
+        </h3>
+        {mb.recordingMbid && (
+          <button
+            onClick={() =>
+              void openUrl(
+                `https://musicbrainz.org/recording/${mb.recordingMbid}`,
+              )
+            }
+            className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-th-text-faint hover:text-th-accent transition-colors"
+          >
+            View
+            <ExternalLink size={11} />
+          </button>
+        )}
+      </div>
+
+      {mb.disambiguation && (
+        <p className="text-[12px] text-th-text-muted italic mb-2">
+          {mb.disambiguation}
+          {mb.firstReleaseYear ? ` · ${mb.firstReleaseYear}` : ""}
+        </p>
+      )}
+
+      {mb.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {mb.tags.map((t) => (
+            <span
+              key={t.name}
+              className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-th-accent/10 text-th-accent"
+              title={`${t.count} ${t.count === 1 ? "vote" : "votes"}`}
+            >
+              {t.name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {extraCredits.length > 0 && (
+        <div className="flex flex-col">
+          {extraCredits.map((c, i) => (
+            <CreditRow
+              key={`${c.role}-${c.artistName}-${i}`}
+              label={c.role}
+              value={c.artistName}
+            />
+          ))}
+        </div>
+      )}
+
+      {mb.urls.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-3 border-t border-th-border-subtle mt-3">
+          {mb.urls.map((u) => (
+            <button
+              key={u.url}
+              onClick={() => void openUrl(u.url)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-th-bg-inset hover:bg-th-bg-inset-hover text-[11px] font-semibold text-th-text-secondary hover:text-th-text-primary transition-colors"
+            >
+              {prettyUrlKind(u.kind)}
+              <ExternalLink size={10} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function prettyUrlKind(kind: string): string {
+  // MB returns slugged relation types — clean them up for display.
+  const map: Record<string, string> = {
+    wikipedia: "Wikipedia",
+    wikidata: "Wikidata",
+    discogs: "Discogs",
+    allmusic: "AllMusic",
+    "official homepage": "Homepage",
+    "social network": "Social",
+    "free streaming": "Stream",
+    "free music download": "Download",
+    "purchase for download": "Buy",
+    "purchase for mail-order": "Mail order",
+    "lyrics": "Lyrics",
+    "youtube": "YouTube",
+    "youtube music": "YouTube Music",
+    "spotify": "Spotify",
+    "soundcloud": "SoundCloud",
+    "bandcamp": "Bandcamp",
+  };
+  return (
+    map[kind.toLowerCase()] ||
+    kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, " ")
+  );
+}
 
 function CreditRow({
   label,

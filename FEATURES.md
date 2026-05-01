@@ -300,6 +300,91 @@ Useful for credits, MBID grabbing, or just rabbit-holing.
 
 ---
 
+## 14. MusicBrainz enrichment per play (recording, release-group, artist MBIDs)
+
+**What it is.** Every track that starts playing now triggers a parallel
+MusicBrainz lookup that resolves three identifiers:
+
+* `recording_mbid` — the specific track recording
+* `release_group_mbid` — the album as a *concept*, so reissues collapse
+* `artist_mbid` — canonical artist, immune to casing/punctuation drift
+
+When ISRC is present we still do the ISRC-by-id lookup (more reliable
+for the recording), and we run a name search in parallel to pick up
+the other two MBIDs. Results are cached on disk in
+`mbid_name_cache.json`, keyed by `lower(title)|lower(artist)`, so
+subsequent plays of the same track skip the network entirely.
+
+The MBIDs are stored on every new row of the local stats `plays` table
+(via the `recording_mbid`, `release_group_mbid`, `artist_mbid` columns
+added in this migration).
+
+**Files.** `src-tauri/src/scrobble/musicbrainz.rs::lookup_by_name`,
+`src-tauri/src/scrobble/mod.rs::on_track_started`,
+`src-tauri/src/stats.rs` (schema + queries).
+
+**How to use.** Automatic — nothing to enable. Hidden side effects:
+
+* Stats Top X dedupes by MBID when present, so "The Beatles" and
+  "Beatles" stop showing as two artists; a remastered album collapses
+  onto the same row as the original; same recording on different
+  releases stops splitting plays.
+* Scrobbles to ListenBrainz now ship the `recording_mbid` automatically
+  (already did; the new lookup means more tracks resolve it).
+
+To force a re-resolve, delete `~/.config/sone/mbid_name_cache.json`.
+
+---
+
+## 15. Cover Art Archive fallback for album covers
+
+**What it is.** When TIDAL has no cover for an album (rare releases,
+bootlegs, regional editions), the cover lookup falls back to MusicBrainz
+→ Cover Art Archive. The backend resolves the release-group MBID,
+HEAD-probes `coverartarchive.org/release-group/{mbid}/front-500`, and
+returns the URL only when the image actually exists. The full https URL
+is stored in the localStorage cache; `getTidalImageUrl` passes it
+through unchanged.
+
+**Files.**
+`src-tauri/src/commands/musicbrainz.rs::lookup_album_cover_caa`,
+`src/api/coverLookup.ts::caaAlbumCover`.
+
+**How to use.** Automatic — Stats and any UI that uses `getAlbumCover`
+benefits. To force a re-resolve, clear localStorage:
+
+```js
+localStorage.removeItem("sone:stats-cover-cache:v1")
+```
+
+---
+
+## 16. MusicBrainz panel in the Credits tab
+
+**What it is.** The drawer's **Credits** tab now appends a *MusicBrainz*
+section beneath the existing TIDAL credits and artist bio. Renders:
+
+* **Disambiguation** + first-release year (helps tell apart Live /
+  Demo / Studio recordings of the same title).
+* **Tags** — community-voted genre/mood/era tags, sorted by votes,
+  capped at 8.
+* **Extra credits** — writers, composers, lyricists, instrument
+  performers that TIDAL doesn't expose.
+* **External links** — Wikipedia, Discogs, AllMusic, Bandcamp,
+  YouTube, Spotify, official homepage… one chip per relation, opens
+  in the system browser.
+* **View** chip — direct link to the recording's MusicBrainz page.
+
+The section hides itself entirely when MB has nothing to add.
+
+**Files.** `src/components/NowPlayingDrawer.tsx::MusicBrainzSection`,
+`src-tauri/src/commands/musicbrainz.rs::get_mb_track_details`.
+
+**How to use.** Drawer → **Credits** tab. Scroll past the TIDAL
+credits/bio. Click any external link or chip to open in your browser.
+
+---
+
 ## Appendix — files & paths
 
 | Thing                          | Path                                       |
@@ -308,7 +393,8 @@ Useful for credits, MBID grabbing, or just rabbit-holing.
 | Stats DB (plain SQLite)        | `~/.config/sone/stats.db`                  |
 | Hooks dir                      | `~/.config/sone/hooks/`                    |
 | Scrobble queue (offline cache) | `~/.config/sone/scrobble_queue.bin`        |
-| MusicBrainz lookup cache       | `~/.config/sone/mb_lookup.bin`             |
+| MusicBrainz ISRC cache         | `~/.config/sone/mbid_cache.json`           |
+| MusicBrainz name cache         | `~/.config/sone/mbid_name_cache.json`      |
 | Dev binary                     | `src-tauri/target/debug/sone`              |
 | Dev log                        | `/tmp/sone-dev.log`                        |
 

@@ -2,6 +2,7 @@ pub mod auth;
 pub mod library;
 pub mod llm;
 pub mod metadata;
+pub mod musicbrainz;
 pub mod pages;
 pub mod playback;
 pub mod scrobble;
