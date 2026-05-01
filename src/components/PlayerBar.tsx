@@ -21,7 +21,8 @@ import { getTidalImageUrl, getTrackDisplayTitle } from "../types";
 import ExplicitBadge from "./ExplicitBadge";
 import { formatTime } from "../lib/format";
 import TidalImage from "./TidalImage";
-import { useCallback, useEffect, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, memo } from "react";
+import { createPortal } from "react-dom";
 import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
   currentTrackAtom,
@@ -491,7 +492,7 @@ export default function PlayerBar() {
       <TransportControls />
 
       {/* Right: Volume & Extras */}
-      <div className="flex items-center justify-end gap-2 w-[30%] min-w-[180px] overflow-hidden">
+      <div className="flex items-center justify-end gap-2 w-[30%] min-w-[180px]">
         <QualityBadge onClick={() => setSignalPathOpen(true)} />
         <ToolsMenu
           onLyrics={() => setLyricsOpen(true)}
@@ -532,15 +533,51 @@ function ToolsMenu({
   onGalaxy: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ left: number; bottom: number } | null>(
+    null,
+  );
+
+  // Compute the menu's screen position from the button's bounding rect
+  // every time it opens (and on resize while open). The menu lives in
+  // a portal at <body>, so absolute coordinates are required.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const MENU_WIDTH = 192; // matches w-48
+      const left = Math.min(
+        Math.max(r.right - MENU_WIDTH, 8),
+        window.innerWidth - MENU_WIDTH - 8,
+      );
+      // bottom relative to viewport: distance from bottom of window to
+      // top of the trigger, plus a small gap.
+      const bottom = window.innerHeight - r.top + 8;
+      setCoords({ left, bottom });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
 
   // Close on outside click / Esc.
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
+      const t = e.target as Node;
+      if (
+        btnRef.current?.contains(t) ||
+        menuRef.current?.contains(t)
+      ) {
+        return;
       }
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -561,8 +598,9 @@ function ToolsMenu({
   ];
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={btnRef}
         onClick={() => setOpen((o) => !o)}
         title="Más herramientas"
         className={`p-1.5 rounded-md transition-colors ${
@@ -573,26 +611,36 @@ function ToolsMenu({
       >
         <MoreVertical size={18} />
       </button>
-      {open && (
-        <div
-          className="absolute bottom-full right-0 mb-2 w-48 bg-th-elevated border border-th-border-subtle rounded-lg shadow-2xl py-1 z-[60]"
-          style={{ animation: "fadeIn 0.12s ease-out" }}
-        >
-          {items.map(({ icon: Icon, label, onClick }) => (
-            <button
-              key={label}
-              onClick={() => {
-                setOpen(false);
-                onClick();
-              }}
-              className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-th-text-secondary hover:bg-th-inset hover:text-th-text-primary transition-colors"
-            >
-              <Icon size={15} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      {open &&
+        coords &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            className="fixed w-48 bg-th-elevated border border-th-border-subtle rounded-lg shadow-2xl py-1"
+            style={{
+              left: coords.left,
+              bottom: coords.bottom,
+              zIndex: 9999,
+              animation: "fadeIn 0.12s ease-out",
+            }}
+          >
+            {items.map(({ icon: Icon, label, onClick }) => (
+              <button
+                key={label}
+                onClick={() => {
+                  setOpen(false);
+                  onClick();
+                }}
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-[13px] text-th-text-secondary hover:bg-th-inset hover:text-th-text-primary transition-colors"
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
