@@ -21,6 +21,84 @@ pub struct TokenData {
     pub username: String,
 }
 
+/// One listen returned by GET /1/user/{user_name}/listens, distilled
+/// down to what the local stats DB needs.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenItem {
+    pub listened_at: i64,
+    pub track_name: String,
+    pub artist_name: String,
+    pub release_name: Option<String>,
+    pub duration_secs: Option<u32>,
+    pub isrc: Option<String>,
+    pub recording_mbid: Option<String>,
+    pub release_mbid: Option<String>,
+}
+
+impl ListenItem {
+    fn from_value(v: &Value) -> Option<Self> {
+        let listened_at = v.get("listened_at")?.as_i64()?;
+        let meta = v.get("track_metadata")?;
+        let track_name = meta.get("track_name")?.as_str()?.to_string();
+        let artist_name = meta.get("artist_name")?.as_str()?.to_string();
+        if track_name.trim().is_empty() || artist_name.trim().is_empty() {
+            return None;
+        }
+        let release_name = meta
+            .get("release_name")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from);
+
+        let additional = meta.get("additional_info");
+        let duration_secs = additional
+            .and_then(|a| a.get("duration_ms").and_then(|d| d.as_u64()))
+            .map(|ms| (ms / 1000) as u32)
+            .or_else(|| {
+                additional
+                    .and_then(|a| a.get("duration").and_then(|d| d.as_u64()))
+                    .map(|s| s as u32)
+            });
+        let isrc = additional
+            .and_then(|a| a.get("isrc").and_then(|i| i.as_str()))
+            .map(String::from);
+
+        let mapping = meta.get("mbid_mapping");
+        let recording_mbid = mapping
+            .and_then(|m| m.get("recording_mbid").and_then(|s| s.as_str()))
+            .or_else(|| {
+                additional.and_then(|a| a.get("recording_mbid").and_then(|s| s.as_str()))
+            })
+            .map(String::from);
+        let release_mbid = mapping
+            .and_then(|m| m.get("release_mbid").and_then(|s| s.as_str()))
+            .or_else(|| additional.and_then(|a| a.get("release_mbid").and_then(|s| s.as_str())))
+            .map(String::from);
+
+        Some(ListenItem {
+            listened_at,
+            track_name,
+            artist_name,
+            release_name,
+            duration_secs,
+            isrc,
+            recording_mbid,
+            release_mbid,
+        })
+    }
+}
+
+/// One page of listens from the public ListenBrainz API.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListensPage {
+    pub count: u64,
+    pub latest_ts: i64,
+    pub oldest_ts: i64,
+    pub listens: Vec<ListenItem>,
+}
+
 // ---------------------------------------------------------------------------
 // ListenBrainzProvider
 // ---------------------------------------------------------------------------
@@ -41,6 +119,85 @@ impl ListenBrainzProvider {
     pub async fn set_token(&self, token: String, username: String) {
         let mut data = self.token.write().await;
         *data = Some(TokenData { token, username });
+    }
+
+    /// Fetch a page of listens for a user from the public ListenBrainz API.
+    /// Public profiles don't require auth, but we send the stored token if
+    /// available so listens behind a private profile still resolve.
+    ///
+    /// Pagination is by timestamp: each call returns up to `count` listens
+    /// older than `max_ts` (or older than now if not provided). The caller
+    /// uses the `oldest_listen_ts` field of the response to set `max_ts`
+    /// for the next page.
+    pub async fn fetch_listens(
+        client: &reqwest::Client,
+        token: Option<&str>,
+        username: &str,
+        max_ts: Option<i64>,
+        min_ts: Option<i64>,
+        count: u32,
+    ) -> Result<ListensPage, SoneError> {
+        let mut req = client
+            .get(format!("{API_BASE}/1/user/{username}/listens"))
+            .timeout(Duration::from_secs(15));
+        let mut query: Vec<(&str, String)> = vec![("count", count.to_string())];
+        if let Some(ts) = max_ts {
+            query.push(("max_ts", ts.to_string()));
+        }
+        if let Some(ts) = min_ts {
+            query.push(("min_ts", ts.to_string()));
+        }
+        req = req.query(&query);
+        if let Some(t) = token {
+            req = req.header("Authorization", format!("Token {t}"));
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| SoneError::Scrobble(format!("listens request failed: {e}")))?;
+        let status = resp.status();
+        if status.as_u16() == 401 {
+            return Err(SoneError::Scrobble("listens: unauthorized".into()));
+        }
+        if status.as_u16() == 429 {
+            return Err(SoneError::Scrobble("listens: rate limited".into()));
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SoneError::Scrobble(format!("listens HTTP {status}: {body}")));
+        }
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| SoneError::Scrobble(format!("listens parse failed: {e}")))?;
+
+        let payload = body
+            .get("payload")
+            .ok_or_else(|| SoneError::Scrobble("listens: missing payload".into()))?;
+        let listens_arr = payload
+            .get("listens")
+            .and_then(|l| l.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut items = Vec::with_capacity(listens_arr.len());
+        for raw in listens_arr {
+            if let Some(item) = ListenItem::from_value(&raw) {
+                items.push(item);
+            }
+        }
+        Ok(ListensPage {
+            count: payload.get("count").and_then(|c| c.as_u64()).unwrap_or(0),
+            latest_ts: payload
+                .get("latest_listen_ts")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            oldest_ts: payload
+                .get("oldest_listen_ts")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            listens: items,
+        })
     }
 
     /// Validate a ListenBrainz user token. Returns the username on success.

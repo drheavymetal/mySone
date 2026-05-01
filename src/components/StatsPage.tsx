@@ -15,7 +15,9 @@ import {
   Activity,
   Crown,
   Headphones,
+  ExternalLink,
 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   getStatsOverview,
   getTopTracks,
@@ -31,7 +33,18 @@ import {
   type HeatmapCell,
   type DailyMinutes,
 } from "../api/stats";
+import {
+  getTrackCover,
+  getAlbumCover,
+  getArtistPicture,
+} from "../api/coverLookup";
+import { getTidalImageUrl } from "../types";
 import PageContainer from "./PageContainer";
+
+type CoverKind =
+  | { kind: "track"; trackId: number | null; title: string; artist: string }
+  | { kind: "album"; album: string; artist: string }
+  | { kind: "artist"; artist: string };
 
 type Tab = "overview" | "tracks" | "artists" | "albums" | "heatmap";
 
@@ -66,6 +79,52 @@ function formatDuration(secs: number): string {
 
 function formatNumber(n: number): string {
   return n.toLocaleString();
+}
+
+/**
+ * Build a MusicBrainz search URL for a given source. We search by name
+ * because we don't carry MBIDs in the stats DB; the user lands on the
+ * disambiguation page on MB and can click through.
+ */
+function musicBrainzUrlFor(source: CoverKind): string {
+  const base = "https://musicbrainz.org/search";
+  if (source.kind === "artist") {
+    return `${base}?type=artist&query=${encodeURIComponent(source.artist)}`;
+  }
+  if (source.kind === "album") {
+    return `${base}?type=release-group&query=${encodeURIComponent(
+      `${source.album} AND artist:${source.artist}`,
+    )}`;
+  }
+  return `${base}?type=recording&query=${encodeURIComponent(
+    `${source.title} AND artist:${source.artist}`,
+  )}`;
+}
+
+function MbLink({
+  source,
+  className,
+}: {
+  source: CoverKind;
+  className?: string;
+}) {
+  const url = musicBrainzUrlFor(source);
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        void openUrl(url);
+      }}
+      title="Open on MusicBrainz"
+      className={
+        "inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-th-text-faint hover:bg-th-bg-inset hover:text-th-text-primary transition-colors " +
+        (className ?? "")
+      }
+    >
+      MB
+      <ExternalLink size={9} />
+    </button>
+  );
 }
 
 function hueFromString(s: string): number {
@@ -257,6 +316,12 @@ function OverviewTab({ window }: { window: StatsWindow }) {
                 secondary={topTrack.artist}
                 count={topTrack.plays}
                 seed={`${topTrack.title}|${topTrack.artist}`}
+                source={{
+                  kind: "track",
+                  trackId: topTrack.trackId,
+                  title: topTrack.title,
+                  artist: topTrack.artist,
+                }}
               />
             )}
             {topArtist && (
@@ -266,6 +331,7 @@ function OverviewTab({ window }: { window: StatsWindow }) {
                 secondary={`${topArtist.distinctTracks} tracks`}
                 count={topArtist.plays}
                 seed={topArtist.artist}
+                source={{ kind: "artist", artist: topArtist.artist }}
               />
             )}
             {topAlbum && (
@@ -275,6 +341,11 @@ function OverviewTab({ window }: { window: StatsWindow }) {
                 secondary={topAlbum.artist}
                 count={topAlbum.plays}
                 seed={`${topAlbum.album}|${topAlbum.artist}`}
+                source={{
+                  kind: "album",
+                  album: topAlbum.album,
+                  artist: topAlbum.artist,
+                }}
               />
             )}
           </div>
@@ -525,16 +596,24 @@ function PodiumCard({
   secondary,
   count,
   seed,
+  source,
 }: {
   rank: string;
   primary: string;
   secondary: string;
   count: number;
   seed: string;
+  source: CoverKind;
 }) {
   return (
-    <div className="relative flex items-center gap-3 overflow-hidden rounded-xl border border-th-border-subtle bg-th-surface/80 p-3 transition-colors hover:border-th-accent/40">
-      <Avatar seed={seed} label={primary} size={56} />
+    <div className="group relative flex items-center gap-3 overflow-hidden rounded-xl border border-th-border-subtle bg-th-surface/80 p-3 transition-colors hover:border-th-accent/40">
+      <CoverArt
+        source={source}
+        seed={seed}
+        label={primary}
+        size={56}
+        rounded={source.kind === "artist" ? "rounded-full" : "rounded-lg"}
+      />
       <div className="min-w-0 flex-1">
         <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-th-accent/80">
           {rank}
@@ -546,30 +625,65 @@ function PodiumCard({
           {secondary}
         </div>
       </div>
-      <div className="text-right">
+      <div className="flex flex-col items-end gap-1">
         <div className="text-[18px] font-extrabold leading-none text-th-text-primary tabular-nums">
           {formatNumber(count)}
         </div>
         <div className="text-[9px] font-semibold uppercase tracking-wider text-th-text-faint">
           plays
         </div>
+        <MbLink source={source} className="opacity-0 group-hover:opacity-100" />
       </div>
     </div>
   );
 }
 
-function Avatar({
+/**
+ * Renders an album cover or artist photo with a name-derived gradient
+ * placeholder underneath. The gradient (with initials) shows immediately
+ * so the layout is stable; the real image streams in once the lookup
+ * resolves and fades in on top.
+ */
+function CoverArt({
+  source,
   seed,
   label,
   size,
+  rounded = "rounded-lg",
 }: {
+  source: CoverKind;
   seed: string;
   label: string;
   size: number;
+  rounded?: string;
 }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUrl(null);
+    setLoaded(false);
+    let p: Promise<string | null>;
+    if (source.kind === "artist") {
+      p = getArtistPicture(source.artist);
+    } else if (source.kind === "album") {
+      p = getAlbumCover(source.album, source.artist);
+    } else {
+      p = getTrackCover(source.trackId, source.title, source.artist);
+    }
+    p.then((uuid) => {
+      if (cancelled) return;
+      if (uuid) setUrl(getTidalImageUrl(uuid, size <= 80 ? 80 : 160));
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [source, size]);
+
   return (
     <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-lg text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_4px_12px_-4px_rgba(0,0,0,0.5)]"
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_4px_12px_-4px_rgba(0,0,0,0.5)] ${rounded}`}
       style={{
         width: size,
         height: size,
@@ -579,7 +693,18 @@ function Avatar({
         letterSpacing: "-0.02em",
       }}
     >
-      <span className="opacity-95">{initialsFor(label)}</span>
+      <span className="opacity-90">{initialsFor(label)}</span>
+      {url && (
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setLoaded(true)}
+          className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300"
+          style={{ opacity: loaded ? 1 : 0 }}
+        />
+      )}
     </div>
   );
 }
@@ -604,6 +729,12 @@ function TopTracksTab({ window }: { window: StatsWindow }) {
         primary: t.title,
         secondary: t.artist + (t.album ? ` — ${t.album}` : ""),
         seed: `${t.title}|${t.artist}`,
+        source: {
+          kind: "track" as const,
+          trackId: t.trackId,
+          title: t.title,
+          artist: t.artist,
+        },
         count: t.plays,
         countLabel: t.plays === 1 ? "play" : "plays",
         time: t.listenedSecs,
@@ -630,6 +761,7 @@ function TopArtistsTab({ window }: { window: StatsWindow }) {
         primary: a.artist,
         secondary: `${a.distinctTracks} ${a.distinctTracks === 1 ? "track" : "tracks"}`,
         seed: a.artist,
+        source: { kind: "artist" as const, artist: a.artist },
         count: a.plays,
         countLabel: a.plays === 1 ? "play" : "plays",
         time: a.listenedSecs,
@@ -656,6 +788,7 @@ function TopAlbumsTab({ window }: { window: StatsWindow }) {
         primary: a.album,
         secondary: a.artist,
         seed: `${a.album}|${a.artist}`,
+        source: { kind: "album" as const, album: a.album, artist: a.artist },
         count: a.plays,
         countLabel: a.plays === 1 ? "play" : "plays",
         time: a.listenedSecs,
@@ -908,6 +1041,7 @@ interface RankedItem {
   primary: string;
   secondary: string;
   seed: string;
+  source: CoverKind;
   count: number;
   countLabel: string;
   time: number;
@@ -963,7 +1097,13 @@ function RankedRow({
       >
         {index + 1}
       </div>
-      <Avatar seed={item.seed} label={item.primary} size={42} />
+      <CoverArt
+        source={item.source}
+        seed={item.seed}
+        label={item.primary}
+        size={42}
+        rounded={item.source.kind === "artist" ? "rounded-full" : "rounded-lg"}
+      />
       <div className="relative min-w-0 flex-1">
         <div className="truncate text-[13px] font-bold text-th-text-primary">
           {item.primary}
@@ -972,13 +1112,17 @@ function RankedRow({
           {item.secondary}
         </div>
       </div>
-      <div className="relative shrink-0 text-right">
+      <div className="relative shrink-0 flex flex-col items-end gap-1">
         <div className="text-[14px] font-extrabold tabular-nums text-th-text-primary">
           {formatNumber(item.count)}
         </div>
         <div className="text-[10px] text-th-text-muted">
           {item.countLabel} · {formatDuration(item.time)}
         </div>
+        <MbLink
+          source={item.source}
+          className="opacity-0 group-hover:opacity-100"
+        />
       </div>
     </li>
   );

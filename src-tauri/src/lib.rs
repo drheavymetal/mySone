@@ -902,6 +902,7 @@ pub fn run() {
             commands::scrobble::connect_librefm,
             commands::scrobble::complete_audioscrobbler_auth,
             commands::scrobble::disconnect_provider,
+            commands::scrobble::import_listenbrainz_history,
             // utility
             commands::utility::get_image_bytes,
             commands::utility::get_cache_stats,

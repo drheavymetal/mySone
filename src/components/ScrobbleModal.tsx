@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { X, Loader2, ExternalLink } from "lucide-react";
+import { X, Loader2, ExternalLink, Download, Check } from "lucide-react";
+import {
+  importListenBrainzHistory,
+  type LbImportResult,
+  type LbImportProgress,
+} from "../api/stats";
 
 interface ScrobbleModalProps {
   open: boolean;
@@ -316,11 +322,14 @@ export default function ScrobbleModal({ open, onClose }: ScrobbleModalProps) {
                 </div>
 
                 {lbConnected ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-green-400" />
-                    <span className="text-[13px] text-green-400">
-                      Scrobbling as: {lbStatus?.username}
-                    </span>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-green-400" />
+                      <span className="text-[13px] text-green-400">
+                        Scrobbling as: {lbStatus?.username}
+                      </span>
+                    </div>
+                    <LbHistoryImport />
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -386,3 +395,103 @@ export default function ScrobbleModal({ open, onClose }: ScrobbleModalProps) {
     </div>
   );
 }
+
+/**
+ * Backfill the local stats DB with the connected ListenBrainz user's
+ * full play history. Listens to the `import-listenbrainz-progress`
+ * event so the user sees a live counter while the walk runs.
+ */
+function LbHistoryImport() {
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<LbImportProgress | null>(null);
+  const [done, setDone] = useState<LbImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<LbImportProgress>("import-listenbrainz-progress", (e) => {
+      setProgress(e.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const start = async () => {
+    setRunning(true);
+    setError(null);
+    setProgress(null);
+    setDone(null);
+    try {
+      const res = await importListenBrainzHistory();
+      setDone(res);
+    } catch (e) {
+      setError(typeof e === "string" ? e : (e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md bg-th-inset border border-th-border-subtle p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[12px] font-bold text-th-text-primary flex items-center gap-1.5">
+            <Download size={12} className="text-th-accent" />
+            Import history
+          </div>
+          <div className="text-[11px] text-th-text-muted mt-0.5">
+            Pull every listen from your ListenBrainz profile into local Stats.
+          </div>
+        </div>
+        <button
+          onClick={start}
+          disabled={running}
+          className="px-3 py-1 text-[12px] font-bold rounded-full bg-th-accent text-black hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center gap-1.5 shrink-0"
+        >
+          {running ? (
+            <>
+              <Loader2 size={11} className="animate-spin" />
+              Importing
+            </>
+          ) : done ? (
+            <>
+              <Check size={11} />
+              Re-run
+            </>
+          ) : (
+            "Start"
+          )}
+        </button>
+      </div>
+
+      {(running || progress) && !done && (
+        <div className="mt-2 text-[11px] text-th-text-muted tabular-nums">
+          Page {progress?.page ?? 0} · imported{" "}
+          <span className="text-th-text-primary">
+            {progress?.imported.toLocaleString() ?? 0}
+          </span>
+          {progress && progress.skipped > 0 && (
+            <> · skipped {progress.skipped.toLocaleString()} dupes</>
+          )}
+        </div>
+      )}
+      {done && (
+        <div className="mt-2 text-[11px] text-th-text-muted tabular-nums">
+          Imported{" "}
+          <span className="text-th-text-primary font-bold">
+            {done.imported.toLocaleString()}
+          </span>{" "}
+          listens · {done.skipped.toLocaleString()} already had · {done.pages}{" "}
+          {done.pages === 1 ? "page" : "pages"}
+        </div>
+      )}
+      {error && (
+        <div className="mt-2 text-[11px] text-red-400">{error}</div>
+      )}
+    </div>
+  );
+}
+

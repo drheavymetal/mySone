@@ -12,6 +12,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -80,6 +81,20 @@ pub struct PlayRecord<'a> {
     pub completed: bool,
     pub isrc: Option<&'a str>,
     pub chosen_by_user: bool,
+    /// Origin of the play. `"local"` for plays produced by SONE itself,
+    /// `"listenbrainz"` for rows backfilled from a ListenBrainz import,
+    /// `"lastfm"` if/when we wire that up. Stored so the UI can tell
+    /// imported history from native plays.
+    pub source: &'a str,
+}
+
+/// Result of a bulk import: how many rows were inserted vs. skipped as
+/// duplicates of existing local plays.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkImportResult {
+    pub imported: u64,
+    pub skipped: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -151,6 +166,7 @@ impl StatsDb {
         let path = config_dir.join("stats.db");
         let conn = Connection::open(&path)?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn)?;
         // Pragmas that match a desktop-app workload: WAL for read concurrency,
         // synchronous=NORMAL is durable enough (we don't lose plays on crash
         // beyond the last few seconds, which are inherently lossy anyway).
@@ -162,6 +178,27 @@ impl StatsDb {
         })
     }
 
+    /// Idempotent schema upgrades. Adds columns the original schema did
+    /// not have, on installations that pre-date them.
+    fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+        let has_source: bool = conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('plays') WHERE name = 'source'",
+                [],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if !has_source {
+            conn.execute(
+                "ALTER TABLE plays ADD COLUMN source TEXT NOT NULL DEFAULT 'local'",
+                [],
+            )?;
+            log::info!("[stats] migrated: added source column");
+        }
+        Ok(())
+    }
+
     pub fn record_play(&self, p: &PlayRecord) -> rusqlite::Result<()> {
         if p.listened_secs < MIN_RECORDABLE_SECS {
             return Ok(());
@@ -171,8 +208,8 @@ impl StatsDb {
             "INSERT INTO plays (
                 started_at, finished_at, track_id, title, artist, album,
                 album_artist, duration_secs, listened_secs, completed,
-                isrc, chosen_by_user
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                isrc, chosen_by_user, source
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 p.started_at,
                 p.finished_at,
@@ -186,9 +223,98 @@ impl StatsDb {
                 p.completed as i32,
                 p.isrc,
                 p.chosen_by_user as i32,
+                p.source,
             ],
         )?;
         Ok(())
+    }
+
+    /// Insert a batch of historical plays, skipping rows that already
+    /// exist locally (matched by `(started_at, lower(title), lower(artist))`).
+    /// Used by the ListenBrainz history importer to backfill stats with
+    /// pre-SONE history without producing duplicates if the user re-runs
+    /// the import or scrobbles the same track later.
+    pub fn bulk_import_plays(&self, records: &[PlayRecord]) -> rusqlite::Result<BulkImportResult> {
+        if records.is_empty() {
+            return Ok(BulkImportResult::default());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        let min_ts = records.iter().map(|r| r.started_at).min().unwrap();
+        let max_ts = records.iter().map(|r| r.started_at).max().unwrap();
+
+        // Pre-load existing keys in the timestamp range so dedup is one
+        // query rather than one per row.
+        let mut existing: HashSet<(i64, String, String)> = HashSet::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT started_at, lower(title), lower(artist)
+                 FROM plays
+                 WHERE started_at BETWEEN ?1 AND ?2",
+            )?;
+            let rows = stmt.query_map(params![min_ts, max_ts], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            for r in rows.flatten() {
+                existing.insert(r);
+            }
+        }
+
+        let mut imported = 0u64;
+        let mut skipped = 0u64;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO plays (
+                    started_at, finished_at, track_id, title, artist, album,
+                    album_artist, duration_secs, listened_secs, completed,
+                    isrc, chosen_by_user, source
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            )?;
+            for r in records {
+                let key = (
+                    r.started_at,
+                    r.title.to_lowercase(),
+                    r.artist.to_lowercase(),
+                );
+                if existing.contains(&key) {
+                    skipped += 1;
+                    continue;
+                }
+                stmt.execute(params![
+                    r.started_at,
+                    r.finished_at,
+                    r.track_id.map(|v| v as i64),
+                    r.title,
+                    r.artist,
+                    r.album,
+                    r.album_artist,
+                    r.duration_secs,
+                    r.listened_secs,
+                    r.completed as i32,
+                    r.isrc,
+                    r.chosen_by_user as i32,
+                    r.source,
+                ])?;
+                existing.insert(key);
+                imported += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(BulkImportResult { imported, skipped })
+    }
+
+    /// Most recent `started_at` of any play in the DB, or `None` if empty.
+    /// Used by the importer to pick a default `min_ts` for incremental runs.
+    pub fn latest_started_at(&self) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT MAX(started_at) FROM plays", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })
     }
 
     pub fn overview(&self, window: StatsWindow) -> rusqlite::Result<StatsOverview> {

@@ -277,3 +277,20 @@ pub async fn complete_audioscrobbler_auth(
 
     Ok(username)
 }
+
+/// Pull the user's ListenBrainz history into the local stats DB.
+/// Pass `sinceUnix` to limit how far back the importer walks; if omitted
+/// the walk continues until the page yielded mostly duplicates or the
+/// per-call page cap is reached. Streams progress via the
+/// `import-listenbrainz-progress` event.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn import_listenbrainz_history(
+    state: State<'_, AppState>,
+    since_unix: Option<i64>,
+) -> Result<crate::scrobble::ImportResult, SoneError> {
+    log::info!("[import_listenbrainz_history]: since_unix={:?}", since_unix);
+    state
+        .scrobble_manager
+        .import_listenbrainz_history(since_unix)
+        .await
+}

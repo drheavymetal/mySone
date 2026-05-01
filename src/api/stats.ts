@@ -87,3 +87,30 @@ export async function getDailyMinutes(
 ): Promise<DailyMinutes[]> {
   return invoke<DailyMinutes[]>("get_daily_minutes", { window });
 }
+
+// ─── ListenBrainz history import ──────────────────────────────────────────
+
+export interface LbImportResult {
+  imported: number;
+  skipped: number;
+  pages: number;
+  username: string;
+}
+
+export interface LbImportProgress {
+  page: number;
+  imported: number;
+  skipped: number;
+  oldestTs: number;
+}
+
+/** Trigger a ListenBrainz history backfill. Streams progress via the
+ * `import-listenbrainz-progress` event. The user must already be
+ * connected to ListenBrainz. */
+export async function importListenBrainzHistory(
+  sinceUnix?: number,
+): Promise<LbImportResult> {
+  return invoke<LbImportResult>("import_listenbrainz_history", {
+    sinceUnix: sinceUnix ?? null,
+  });
+}

@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::Crypto;
 use crate::stats::{PlayRecord, StatsDb};
+use crate::SoneError;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -46,6 +47,16 @@ pub struct ProviderStatus {
     pub name: String,
     pub connected: bool,
     pub username: Option<String>,
+}
+
+/// Outcome of a ListenBrainz history import run.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub imported: u64,
+    pub skipped: u64,
+    pub pages: u32,
+    pub username: String,
 }
 
 pub enum ScrobbleResult {
@@ -187,6 +198,7 @@ impl ScrobbleManager {
             completed: p.meets_threshold(),
             isrc: p.track.isrc.as_deref(),
             chosen_by_user: p.track.chosen_by_user,
+            source: "local",
         };
         if let Err(e) = self.stats.record_play(&record) {
             log::warn!("[stats] record_play failed: {e}");
@@ -535,6 +547,140 @@ impl ScrobbleManager {
 
     pub async fn queue_size(&self) -> usize {
         self.queue.len().await
+    }
+
+    /// Backfill the local stats DB with a user's ListenBrainz history.
+    ///
+    /// The user must be connected to ListenBrainz (the username is taken
+    /// from the connected provider). Listens are paginated newest-first,
+    /// converted to local play records, and inserted via the dedup-aware
+    /// `bulk_import_plays`. Progress is emitted to the frontend on the
+    /// `import-listenbrainz-progress` channel after every page so the UI
+    /// can render a live counter.
+    ///
+    /// The walk stops on:
+    ///  * an empty page (we ran out of history),
+    ///  * three consecutive pages where ≥95% of rows were already in the
+    ///    local DB (signals a re-import — no new history beyond this),
+    ///  * the page's oldest timestamp falling below `since_unix`.
+    ///
+    /// Public listens require no token; private profiles will fail with
+    /// 401 — the caller can flip their LB profile to public and retry.
+    pub async fn import_listenbrainz_history(
+        &self,
+        since_unix: Option<i64>,
+    ) -> Result<ImportResult, SoneError> {
+        let username: String = {
+            let providers = self.providers.read().await;
+            let provider = providers
+                .iter()
+                .find(|p| p.name() == "listenbrainz" && p.is_authenticated())
+                .ok_or_else(|| SoneError::Scrobble("listenbrainz: not connected".into()))?;
+            provider
+                .username()
+                .await
+                .ok_or_else(|| SoneError::Scrobble("listenbrainz: no username".into()))?
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|e| SoneError::Scrobble(format!("import client build failed: {e}")))?;
+
+        let min_ts = since_unix.unwrap_or(0);
+        let mut max_ts: Option<i64> = None;
+        let mut imported: u64 = 0;
+        let mut skipped: u64 = 0;
+        let mut pages: u32 = 0;
+        let mut consecutive_dupes: u32 = 0;
+        const PAGE: u32 = 1000;
+        const MAX_PAGES: u32 = 100;
+
+        loop {
+            if pages >= MAX_PAGES {
+                log::warn!("[lb-import] hit page cap ({MAX_PAGES})");
+                break;
+            }
+            let page = listenbrainz::ListenBrainzProvider::fetch_listens(
+                &client,
+                None,
+                &username,
+                max_ts,
+                Some(min_ts),
+                PAGE,
+            )
+            .await?;
+            pages += 1;
+
+            if page.listens.is_empty() {
+                break;
+            }
+
+            let oldest_in_page = page.oldest_ts;
+            let records: Vec<PlayRecord> = page
+                .listens
+                .iter()
+                .map(|l| {
+                    let dur = l.duration_secs.unwrap_or(180);
+                    PlayRecord {
+                        started_at: l.listened_at,
+                        finished_at: l.listened_at + dur as i64,
+                        track_id: None,
+                        title: l.track_name.as_str(),
+                        artist: l.artist_name.as_str(),
+                        album: l.release_name.as_deref(),
+                        album_artist: None,
+                        duration_secs: dur,
+                        listened_secs: dur,
+                        completed: true,
+                        isrc: l.isrc.as_deref(),
+                        chosen_by_user: true,
+                        source: "listenbrainz",
+                    }
+                })
+                .collect();
+
+            let res = self
+                .stats
+                .bulk_import_plays(&records)
+                .map_err(|e| SoneError::Scrobble(format!("import db error: {e}")))?;
+            imported += res.imported;
+            skipped += res.skipped;
+
+            let _ = self.app_handle.emit(
+                "import-listenbrainz-progress",
+                serde_json::json!({
+                    "page": pages,
+                    "imported": imported,
+                    "skipped": skipped,
+                    "oldestTs": oldest_in_page,
+                }),
+            );
+
+            let total = res.imported + res.skipped;
+            if total > 0 && res.skipped * 100 / total >= 95 {
+                consecutive_dupes += 1;
+                if consecutive_dupes >= 3 {
+                    log::info!("[lb-import] stopping — three consecutive duplicate pages");
+                    break;
+                }
+            } else {
+                consecutive_dupes = 0;
+            }
+
+            if oldest_in_page <= min_ts {
+                break;
+            }
+            max_ts = Some(oldest_in_page - 1);
+            tokio::time::sleep(Duration::from_millis(350)).await;
+        }
+
+        Ok(ImportResult {
+            imported,
+            skipped,
+            pages,
+            username,
+        })
     }
 
     /// Fire now_playing to all providers (non-blocking, with timeout).
