@@ -32,13 +32,19 @@ target/
 \#*\#
 .\#*
 
-# Internal docs
-docs/
+# Internal docs (root /docs/ ignored, but classical hub project docs are tracked)
+/docs/*
+!/docs/classical/
+!/docs/code-style.md
 
-# claude worktrees
-.claude/
-*claude*
-*CLAUDE*
+# Claude state — ignore everything except project-scoped agents
+/.claude/*
+!/.claude/agents/
+
+# Personal Claude memory / session files at any depth
+**/CLAUDE.md
+**/.claude-session
+**/claude-history
 
 # local files
 nocommit
