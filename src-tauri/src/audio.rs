@@ -1358,7 +1358,7 @@ impl AudioPlayer {
                                     // Bus watcher: decode errors + EOS → forward to writer
                                     let eos_flag = Arc::clone(&eos);
                                     let app_handle_clone = app_handle.clone();
-                                    let writer_tx_bus = wtx;
+                                    let writer_tx_bus = wtx.clone();
                                     let bus_gen = Arc::clone(&writer_gen);
                                     let tearing_down_bus = Arc::clone(&tearing_down);
                                     if let Some(bus) = pipe.bus() {
@@ -1366,14 +1366,23 @@ impl AudioPlayer {
                                             for msg in bus.iter_timed(gst::ClockTime::NONE) {
                                                 match msg.view() {
                                                     gst::MessageView::Eos(..) => {
-                                                        eos_flag.store(true, Ordering::SeqCst);
-                                                        writer_tx_bus
-                                                            .send(WriterCommand::EndOfTrack {
-                                                                emit_finished: true,
-                                                                generation: bus_gen
-                                                                    .load(Ordering::Acquire),
-                                                            })
-                                                            .ok();
+                                                        if eos_flag
+                                                            .compare_exchange(
+                                                                false,
+                                                                true,
+                                                                Ordering::SeqCst,
+                                                                Ordering::SeqCst,
+                                                            )
+                                                            .is_ok()
+                                                        {
+                                                            writer_tx_bus
+                                                                .send(WriterCommand::EndOfTrack {
+                                                                    emit_finished: true,
+                                                                    generation: bus_gen
+                                                                        .load(Ordering::Acquire),
+                                                                })
+                                                                .ok();
+                                                        }
                                                         break;
                                                     }
                                                     gst::MessageView::Error(err) => {
@@ -1420,6 +1429,87 @@ impl AudioPlayer {
                                             }
                                         });
                                     }
+
+                                    // EOS watchdog: some GStreamer DASH FLAC streams reach
+                                    // end-of-stream without emitting an Eos bus message,
+                                    // particularly after a near-end seek. When that happens
+                                    // the bus thread blocks forever and playback freezes
+                                    // on the last decoded frame. Poll the pipeline's own
+                                    // position vs duration; if pinned at end for ≥1.5 s,
+                                    // synthesise the EndOfTrack so auto-advance still fires.
+                                    let watchdog_pipe = pipe.downgrade();
+                                    let watchdog_eos = Arc::clone(&eos);
+                                    let watchdog_tearing = Arc::clone(&tearing_down);
+                                    let watchdog_paused = Arc::clone(&paused);
+                                    let watchdog_tx = wtx;
+                                    let watchdog_gen = Arc::clone(&writer_gen);
+                                    let watchdog_start_gen =
+                                        watchdog_gen.load(Ordering::Acquire);
+                                    std::thread::spawn(move || {
+                                        let tick = std::time::Duration::from_millis(500);
+                                        let mut at_end_ticks: u32 = 0;
+                                        loop {
+                                            std::thread::sleep(tick);
+                                            if watchdog_eos.load(Ordering::SeqCst) {
+                                                break;
+                                            }
+                                            if watchdog_tearing.load(Ordering::SeqCst) {
+                                                break;
+                                            }
+                                            if watchdog_gen.load(Ordering::Acquire)
+                                                != watchdog_start_gen
+                                            {
+                                                break;
+                                            }
+                                            if watchdog_paused.load(Ordering::Acquire) {
+                                                at_end_ticks = 0;
+                                                continue;
+                                            }
+                                            let Some(p) = watchdog_pipe.upgrade() else {
+                                                break;
+                                            };
+                                            let pos = p
+                                                .query_position::<gst::ClockTime>()
+                                                .map(|t| t.nseconds());
+                                            let dur = p
+                                                .query_duration::<gst::ClockTime>()
+                                                .map(|t| t.nseconds());
+                                            if let (Some(pos_ns), Some(dur_ns)) = (pos, dur) {
+                                                if dur_ns > 0
+                                                    && pos_ns + 500_000_000 >= dur_ns
+                                                {
+                                                    at_end_ticks += 1;
+                                                    if at_end_ticks >= 3 {
+                                                        if watchdog_eos
+                                                            .compare_exchange(
+                                                                false,
+                                                                true,
+                                                                Ordering::SeqCst,
+                                                                Ordering::SeqCst,
+                                                            )
+                                                            .is_ok()
+                                                        {
+                                                            log::warn!(
+                                                                "[audio] EOS watchdog: synthesising track-finished (pos={}ms, dur={}ms)",
+                                                                pos_ns / 1_000_000,
+                                                                dur_ns / 1_000_000
+                                                            );
+                                                            watchdog_tx
+                                                                .send(WriterCommand::EndOfTrack {
+                                                                    emit_finished: true,
+                                                                    generation: watchdog_gen
+                                                                        .load(Ordering::Acquire),
+                                                                })
+                                                                .ok();
+                                                        }
+                                                        break;
+                                                    }
+                                                } else {
+                                                    at_end_ticks = 0;
+                                                }
+                                            }
+                                        }
+                                    });
 
                                     backend = Some(PlaybackBackend::DirectAlsa {
                                         pipeline: pipe,
