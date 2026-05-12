@@ -56,6 +56,11 @@ bytes = "1"
 uuid = { version = "1", features = ["v4"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
+# Phase 9 (D-040 + D-048): WorkBucket title heuristics + movement-title
+# defence regexes. Already pulled transitively by env_logger and
+# tauri-utils, but we declare it explicitly so the bucket and
+# movement-defence code don't break if a transitive ever drops it.
+regex = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.1"

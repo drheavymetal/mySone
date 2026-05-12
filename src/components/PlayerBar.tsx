@@ -50,6 +50,8 @@ import QueueChatPanel from "./QueueChatPanel";
 import ShareLinkButton from "./ShareLinkButton";
 import VolumeSlider from "./VolumeSlider";
 import TrackContextMenu from "./TrackContextMenu";
+import ClassicalWorkLink from "./classical/ClassicalWorkLink";
+import WorkHeaderLine from "./classical/WorkHeaderLine";
 
 // ─── TrackInfoSection ──────────────────────────────────────────────────────
 
@@ -75,6 +77,12 @@ const TrackInfoSection = memo(function TrackInfoSection() {
         />
       </div>
       <div className="flex flex-col justify-center min-w-0">
+        {/*
+          Phase 3 F3.1/F3.2/F3.3: persistent classical header — only
+          renders when the current track has a known parent Work.
+          Strictly additive; non-classical tracks are unaffected.
+        */}
+        <WorkHeaderLine />
         <div className="flex items-center gap-1.5 min-w-0">
           <span
             onClick={() =>
@@ -85,6 +93,7 @@ const TrackInfoSection = memo(function TrackInfoSection() {
             {getTrackDisplayTitle(currentTrack)}
           </span>
           {currentTrack.explicit && <ExplicitBadge />}
+          <ClassicalWorkLink />
         </div>
         <span className="text-th-text-secondary text-[11px] truncate mt-0.5">
           <TrackArtists

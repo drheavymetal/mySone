@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod classical;
 pub mod lastfm;
 pub mod library;
 pub mod llm;

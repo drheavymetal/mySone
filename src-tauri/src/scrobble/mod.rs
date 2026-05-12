@@ -44,6 +44,11 @@ pub struct ScrobbleTrack {
     pub release_group_mbid: Option<String>,
     #[serde(default)]
     pub artist_mbid: Option<String>,
+    /// MusicBrainz Work MBID (parent work for classical recordings).
+    /// Resolved post-track-start by the catalog service when a recording
+    /// MBID becomes known. NULL for non-classical plays.
+    #[serde(default)]
+    pub work_mbid: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -152,6 +157,19 @@ impl TrackPlayback {
 // ScrobbleManager
 // ---------------------------------------------------------------------------
 
+/// Resolve a parent Work MBID from a Recording MBID. Implemented by the
+/// classical `CatalogService`. Kept as a trait here so the scrobble
+/// manager doesn't depend on the classical module directly — keeps the
+/// dependency arrow pointing one way (lib → scrobble; lib → classical;
+/// scrobble does not import classical).
+#[async_trait]
+pub trait WorkMbidResolver: Send + Sync {
+    async fn resolve_work_for_recording(
+        &self,
+        recording_mbid: &str,
+    ) -> Option<String>;
+}
+
 pub struct ScrobbleManager {
     providers: RwLock<Vec<Box<dyn ScrobbleProvider>>>,
     queue: queue::ScrobbleQueue,
@@ -159,6 +177,10 @@ pub struct ScrobbleManager {
     app_handle: tauri::AppHandle,
     mb_lookup: Arc<musicbrainz::MusicBrainzLookup>,
     stats: Arc<StatsDb>,
+    /// Optional resolver for parent-Work MBID. Set after construction
+    /// (the classical catalog is built later in `AppState::new`). Kept
+    /// behind a `RwLock` so mutating it doesn't require `&mut self`.
+    work_resolver: RwLock<Option<Arc<dyn WorkMbidResolver>>>,
 }
 
 impl ScrobbleManager {
@@ -177,7 +199,37 @@ impl ScrobbleManager {
             app_handle,
             mb_lookup: Arc::new(musicbrainz::MusicBrainzLookup::new(config_dir, http_client)),
             stats,
+            work_resolver: RwLock::new(None),
         }
+    }
+
+    /// Install the work-mbid resolver. Best-effort, may be called once
+    /// or never; if never set, on_track_started simply skips the
+    /// classical work resolution.
+    pub async fn set_work_resolver(&self, resolver: Arc<dyn WorkMbidResolver>) {
+        let mut w = self.work_resolver.write().await;
+        *w = Some(resolver);
+    }
+
+    /// Snapshot of the parent-Work MBID for the currently playing
+    /// track, when the background MBID resolver has caught up.
+    /// Returns `None` while the lookup is still in flight or when the
+    /// track is not classical.
+    pub async fn current_work_mbid(&self) -> Option<String> {
+        let current = self.current_track.lock().await;
+        current
+            .as_ref()
+            .and_then(|p| p.track.work_mbid.clone())
+    }
+
+    /// Snapshot of the recording MBID once it's been resolved. Useful
+    /// for the player to show "View work" UI as soon as MB confirms
+    /// the recording, even before the work-rel call lands.
+    pub async fn current_recording_mbid(&self) -> Option<String> {
+        let current = self.current_track.lock().await;
+        current
+            .as_ref()
+            .and_then(|p| p.track.recording_mbid.clone())
     }
 
     /// Persist a finished playback to the local stats DB. Called whenever
@@ -206,6 +258,7 @@ impl ScrobbleManager {
             recording_mbid: p.track.recording_mbid.as_deref(),
             release_group_mbid: p.track.release_group_mbid.as_deref(),
             artist_mbid: p.track.artist_mbid.as_deref(),
+            work_mbid: p.track.work_mbid.as_deref(),
         };
         if let Err(e) = self.stats.record_play(&record) {
             log::warn!("[stats] record_play failed: {e}");
@@ -304,6 +357,12 @@ impl ScrobbleManager {
         let expected_id = track.track_id;
         let mb = Arc::clone(&self.mb_lookup);
         let ct = Arc::clone(&self.current_track);
+        // Snapshot the resolver under the read lock so the spawned task
+        // doesn't have to borrow `self`.
+        let work_resolver = self.work_resolver.read().await.clone();
+        // Cloned for the event emission inside the spawned task. The
+        // ScrobbleManager owns its own app_handle; cloning is cheap.
+        let event_handle = self.app_handle.clone();
         tokio::spawn(async move {
             // Run ISRC and name lookups in parallel — they share a
             // rate-limit mutex internally, so ordering is enforced there.
@@ -330,24 +389,73 @@ impl ScrobbleManager {
                 return;
             }
 
-            let mut current = ct.lock().await;
-            if let Some(ref mut playback) = *current {
-                let same_track = match expected_id {
-                    Some(id) => playback.track.track_id == Some(id),
-                    None => {
-                        playback.track.track == track_name
-                            && playback.track.artist == artist_name
+            // Apply MBIDs to the live track first.
+            {
+                let mut current = ct.lock().await;
+                if let Some(ref mut playback) = *current {
+                    let same_track = match expected_id {
+                        Some(id) => playback.track.track_id == Some(id),
+                        None => {
+                            playback.track.track == track_name
+                                && playback.track.artist == artist_name
+                        }
+                    };
+                    if same_track {
+                        if let Some(ref v) = recording_mbid {
+                            playback.track.recording_mbid = Some(v.clone());
+                        }
+                        if let Some(v) = release_group_mbid {
+                            playback.track.release_group_mbid = Some(v);
+                        }
+                        if let Some(v) = artist_mbid {
+                            playback.track.artist_mbid = Some(v);
+                        }
                     }
-                };
-                if same_track {
-                    if let Some(v) = recording_mbid {
-                        playback.track.recording_mbid = Some(v);
+                }
+            }
+
+            // Phase 1 (Classical Hub): resolve parent Work MBID, off the
+            // critical path. Best-effort; failure does not affect the
+            // play in any way.
+            //
+            // Phase 3 (B3.3): once the work_mbid lands on the live track,
+            // emit `classical:work-resolved` so the frontend can show the
+            // "View work" affordance + work header without polling. The
+            // emission happens AFTER the playback state is updated, so
+            // listeners reading `current_work_mbid` see a consistent value
+            // when they react to the event.
+            if let (Some(rec_mbid), Some(resolver)) =
+                (recording_mbid.as_ref(), work_resolver.as_ref())
+            {
+                if let Some(work_mbid) =
+                    resolver.resolve_work_for_recording(rec_mbid).await
+                {
+                    let mut applied = false;
+                    {
+                        let mut current = ct.lock().await;
+                        if let Some(ref mut playback) = *current {
+                            let same_track = match expected_id {
+                                Some(id) => playback.track.track_id == Some(id),
+                                None => {
+                                    playback.track.track == track_name
+                                        && playback.track.artist == artist_name
+                                }
+                            };
+                            if same_track {
+                                playback.track.work_mbid = Some(work_mbid.clone());
+                                applied = true;
+                            }
+                        }
                     }
-                    if let Some(v) = release_group_mbid {
-                        playback.track.release_group_mbid = Some(v);
-                    }
-                    if let Some(v) = artist_mbid {
-                        playback.track.artist_mbid = Some(v);
+                    if applied {
+                        let _ = event_handle.emit(
+                            "classical:work-resolved",
+                            serde_json::json!({
+                                "trackId": expected_id,
+                                "recordingMbid": rec_mbid,
+                                "workMbid": work_mbid,
+                            }),
+                        );
                     }
                 }
             }
@@ -696,6 +804,7 @@ impl ScrobbleManager {
                         recording_mbid: l.recording_mbid.as_deref(),
                         release_group_mbid: None,
                         artist_mbid: None,
+                        work_mbid: None,
                     }
                 })
                 .collect();
@@ -837,6 +946,7 @@ impl ScrobbleManager {
                     recording_mbid: t.recording_mbid.as_deref(),
                     release_group_mbid: None,
                     artist_mbid: None,
+                    work_mbid: None,
                 })
                 .collect();
 

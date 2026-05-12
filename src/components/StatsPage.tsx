@@ -40,6 +40,18 @@ import {
   type DiscoveryPoint,
 } from "../api/stats";
 import {
+  getClassicalDiscoveryCurve,
+  getClassicalOverview,
+  listTopClassicalComposers,
+  listTopClassicalWorks,
+} from "../api/classical";
+import type {
+  ClassicalOverview,
+  TopClassicalComposer,
+  TopClassicalWork,
+} from "../types/classical";
+import { useNavigation } from "../hooks/useNavigation";
+import {
   getTrackCover,
   getAlbumCover,
   getArtistPicture,
@@ -52,7 +64,7 @@ type CoverKind =
   | { kind: "album"; album: string; artist: string }
   | { kind: "artist"; artist: string };
 
-type Tab = "overview" | "tracks" | "artists" | "albums" | "patterns";
+type Tab = "overview" | "tracks" | "artists" | "albums" | "patterns" | "classical";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -60,6 +72,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "artists", label: "Top Artists" },
   { id: "albums", label: "Top Albums" },
   { id: "patterns", label: "Patterns" },
+  { id: "classical", label: "Classical" },
 ];
 
 const WINDOWS: { id: StatsWindow; label: string }[] = [
@@ -222,6 +235,7 @@ export default function StatsPage() {
         {tab === "artists" && <TopArtistsTab window={window} />}
         {tab === "albums" && <TopAlbumsTab window={window} />}
         {tab === "patterns" && <PatternsTab window={window} />}
+        {tab === "classical" && <ClassicalTab window={window} />}
       </div>
     </PageContainer>
   );
@@ -1530,5 +1544,223 @@ function RankedRow({
         />
       </div>
     </li>
+  );
+}
+
+// ─── Classical sub-tab (Phase 6) ───────────────────────────────────────────
+
+/**
+ * Phase 6 (F6.5) — Classical-only insights inside the unified Stats
+ * page. Reads from the same SQLite stats database the rest of the page
+ * uses; aggregations filter by `work_mbid IS NOT NULL` so non-classical
+ * plays never leak into the view.
+ *
+ * The component owns four parallel queries:
+ *  - `getClassicalOverview` (header banner with totals)
+ *  - `listTopClassicalWorks` (leaderboard of plays per `work_mbid`)
+ *  - `listTopClassicalComposers` (leaderboard of plays per `artist_mbid`)
+ *  - `getClassicalDiscoveryCurve` (daily new-classical-artist curve)
+ *
+ * All four queries are read-only on stats DB, never touch audio.
+ */
+function ClassicalTab({ window }: { window: StatsWindow }) {
+  const { navigateToClassicalWork, navigateToClassicalComposer } =
+    useNavigation();
+  const [overview, setOverview] = useState<ClassicalOverview | null>(null);
+  const [topWorks, setTopWorks] = useState<TopClassicalWork[]>([]);
+  const [topComposers, setTopComposers] = useState<TopClassicalComposer[]>([]);
+  const [curve, setCurve] = useState<DiscoveryPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      getClassicalOverview(window).catch(() => null),
+      listTopClassicalWorks(window, 12).catch(() => []),
+      listTopClassicalComposers(window, 12).catch(() => []),
+      getClassicalDiscoveryCurve(window).catch(() => []),
+    ])
+      .then(([ov, tw, tc, dc]) => {
+        if (cancelled) {
+          return;
+        }
+        setOverview(ov);
+        setTopWorks(tw);
+        setTopComposers(tc);
+        setCurve(dc);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [window]);
+
+  const totalNewArtists = useMemo(
+    () => curve.reduce((acc, p) => acc + p.newArtists, 0),
+    [curve],
+  );
+
+  if (loading) {
+    return <Loader />;
+  }
+
+  if (!overview || overview.totalPlays === 0) {
+    return (
+      <EmptyState
+        title="No classical plays yet"
+        body="Once you play a classical track from any Work page, this tab will fill in. Plays without a parent Work MBID are excluded by design."
+      />
+    );
+  }
+
+  const hours = Math.round(overview.totalListenedSecs / 3600);
+
+  return (
+    <div className="space-y-6">
+      <section
+        aria-label="Classical listening footprint"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+      >
+        <StatTile
+          icon={<Music size={16} />}
+          label="Plays"
+          value={formatNumber(overview.totalPlays)}
+          sub="classical only"
+          accent="var(--th-accent)"
+        />
+        <StatTile
+          icon={<Clock size={16} />}
+          label="Hours"
+          value={String(hours)}
+          sub={`${formatNumber(overview.totalListenedSecs)}s`}
+          accent="var(--th-accent)"
+        />
+        <StatTile
+          icon={<Disc3 size={16} />}
+          label="Distinct works"
+          value={formatNumber(overview.distinctWorks)}
+          sub={`${formatNumber(overview.distinctRecordings)} recordings`}
+          accent="var(--th-accent)"
+        />
+        <StatTile
+          icon={<Users size={16} />}
+          label="Composers"
+          value={formatNumber(overview.distinctComposers)}
+          sub="resolved via MB"
+          accent="var(--th-accent)"
+        />
+      </section>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <section aria-labelledby="cls-top-works">
+          <SectionHeading icon={<Crown size={14} />} title="Top works" />
+          {topWorks.length === 0 ? (
+            <p className="text-[12px] text-th-text-muted">
+              No work plays in this window.
+            </p>
+          ) : (
+            <ol className="space-y-1">
+              {topWorks.map((w, idx) => (
+                <li key={w.workMbid}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigateToClassicalWork(w.workMbid, w.sampleTitle)
+                    }
+                    className="flex w-full items-center justify-between rounded-md bg-th-surface/40 px-3 py-2 text-left transition-colors hover:bg-th-surface-hover"
+                  >
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="w-5 shrink-0 text-right tabular-nums text-[12px] font-bold text-th-text-faint">
+                        {idx + 1}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-bold text-th-text-primary">
+                          {w.sampleTitle ?? "Untitled work"}
+                        </span>
+                        <span className="block truncate text-[11px] text-th-text-muted">
+                          {w.sampleArtist ?? ""}
+                          {w.distinctRecordings > 1 && (
+                            <span className="ml-1 text-th-text-faint">
+                              · {w.distinctRecordings} versions
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="ml-3 shrink-0 tabular-nums text-[13px] font-bold text-th-accent">
+                      {w.plays}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section aria-labelledby="cls-top-composers">
+          <SectionHeading icon={<Users size={14} />} title="Top composers" />
+          {topComposers.length === 0 ? (
+            <p className="text-[12px] text-th-text-muted">
+              No composer-resolved plays in this window.
+            </p>
+          ) : (
+            <ol className="space-y-1">
+              {topComposers.map((c, idx) => (
+                <li key={c.composerMbid}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigateToClassicalComposer(
+                        c.composerMbid,
+                        c.sampleName,
+                      )
+                    }
+                    className="flex w-full items-center justify-between rounded-md bg-th-surface/40 px-3 py-2 text-left transition-colors hover:bg-th-surface-hover"
+                  >
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="w-5 shrink-0 text-right tabular-nums text-[12px] font-bold text-th-text-faint">
+                        {idx + 1}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-bold text-th-text-primary">
+                          {c.sampleName ?? "Unknown composer"}
+                        </span>
+                        <span className="block truncate text-[11px] text-th-text-muted">
+                          {c.distinctWorks} work
+                          {c.distinctWorks === 1 ? "" : "s"}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="ml-3 shrink-0 tabular-nums text-[13px] font-bold text-th-accent">
+                      {c.plays}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      </div>
+
+      <section aria-labelledby="cls-discovery">
+        <SectionHeading
+          icon={<Compass size={14} />}
+          title="Classical discovery"
+        />
+        <p className="text-[12px] text-th-text-muted">
+          {formatNumber(totalNewArtists)} composer
+          {totalNewArtists === 1 ? "" : "s"} discovered for the first
+          time in this window. Each entry counts the very first
+          appearance of a classical composer in your local history;
+          re-plays don't count.
+        </p>
+      </section>
+    </div>
   );
 }

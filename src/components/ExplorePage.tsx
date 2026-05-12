@@ -10,6 +10,7 @@ import {
   Star,
   Users,
   Music,
+  ArrowRight,
 } from "lucide-react";
 import { useNavigation } from "../hooks/useNavigation";
 import { getPageSection } from "../api/tidal";
@@ -43,7 +44,7 @@ const ICON_MAP: Record<string, any> = {
 };
 
 export default function ExplorePage() {
-  const { navigateToExplorePage } = useNavigation();
+  const { navigateToExplorePage, navigateToClassicalHub } = useNavigation();
 
   const [sections, setSections] = useState<HomeSection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,9 +103,39 @@ export default function ExplorePage() {
     <div className="flex-1 bg-gradient-to-b from-th-surface to-th-base min-h-full">
       <PageContainer className="px-8 py-10">
         {/* Header */}
-        <h1 className="text-[32px] font-bold text-th-text-primary tracking-tight mb-10">
+        <h1 className="text-[32px] font-bold text-th-text-primary tracking-tight mb-6">
           Explore
         </h1>
+
+        {/* Classical Hub pill — Phase 2 entry point. Sub-mode of Explore
+            (D-001), inserted before TIDAL editorial sections so the
+            existing Tidal explore flow is untouched. */}
+        <button
+          type="button"
+          onClick={navigateToClassicalHub}
+          className="group mb-10 flex w-full items-center gap-4 rounded-2xl border border-th-accent/30 bg-gradient-to-r from-th-accent/15 via-th-accent/5 to-transparent px-5 py-4 text-left transition-[background,border-color] duration-200 hover:border-th-accent/60 hover:from-th-accent/25"
+          aria-label="Enter the Classical Hub"
+        >
+          <span
+            aria-hidden="true"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-th-accent/20 text-2xl text-th-accent"
+          >
+            ♪
+          </span>
+          <span className="flex-1">
+            <span className="block text-[18px] font-extrabold tracking-tight text-th-text-primary">
+              Classical Hub
+            </span>
+            <span className="mt-0.5 block text-[12px] text-th-text-muted">
+              Composers, works, and recordings · Powered by MusicBrainz +
+              OpenOpus + Wikipedia
+            </span>
+          </span>
+          <ArrowRight
+            size={18}
+            className="shrink-0 text-th-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-th-text-primary"
+          />
+        </button>
 
         {loading && <ExploreSkeleton />}
 

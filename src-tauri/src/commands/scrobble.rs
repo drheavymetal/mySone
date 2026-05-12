@@ -52,6 +52,7 @@ pub async fn notify_track_started(
         artist_mbid: None,
         track_id: payload.track_id,
         recording_mbid: None,
+        work_mbid: None,
     };
     state.hooks.on_track_started(&track);
     state.scrobble_manager.on_track_started(track).await;
@@ -95,6 +96,17 @@ pub async fn get_scrobble_status(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_scrobble_queue_size(state: State<'_, AppState>) -> Result<usize, SoneError> {
     Ok(state.scrobble_manager.queue_size().await)
+}
+
+/// Phase 1 (Classical Hub): expose the parent-Work MBID resolved for
+/// the currently playing track, when known. Returns `null` until the
+/// background MBID lookup completes; the frontend polls this every
+/// few seconds to surface the "View work" affordance.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_current_classical_work_mbid(
+    state: State<'_, AppState>,
+) -> Result<Option<String>, SoneError> {
+    Ok(state.scrobble_manager.current_work_mbid().await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

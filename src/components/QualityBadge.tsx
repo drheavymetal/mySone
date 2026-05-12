@@ -1,6 +1,10 @@
 import { memo } from "react";
 import { useAtomValue } from "jotai";
-import { currentTrackAtom, streamInfoAtom } from "../atoms/playback";
+import {
+  currentTrackAtom,
+  signalPathAtom,
+  streamInfoAtom,
+} from "../atoms/playback";
 
 interface QualityBadgeProps {
   onClick?: () => void;
@@ -11,6 +15,7 @@ const QualityBadge = memo(function QualityBadge({
 }: QualityBadgeProps) {
   const currentTrack = useAtomValue(currentTrackAtom);
   const streamInfo = useAtomValue(streamInfoAtom);
+  const signalPath = useAtomValue(signalPathAtom);
 
   const quality = streamInfo?.audioQuality || currentTrack?.audioQuality;
   if (!quality) return null;
@@ -31,7 +36,20 @@ const QualityBadge = memo(function QualityBadge({
   if (streamInfo?.codec) parts.push(streamInfo.codec);
   const detail = parts.join(" ");
 
-  const label = isMax ? "HI-RES LOSSLESS" : isHiFi ? "LOSSLESS" : "HIGH";
+  // Phase 4 (F4.4): when the live signal path reports bit-perfect AND
+  // exclusive mode, surface "BIT-PERFECT" instead of the bare tier
+  // label — this is the SONE differentiator vs AMC. The tier color
+  // stays the same (th-accent) so the chip still feels Hi-Res, just
+  // with a more honest label.
+  const bitPerfectLive =
+    !!signalPath?.bitPerfect && !!signalPath?.exclusiveMode;
+  const label = bitPerfectLive
+    ? "BIT-PERFECT"
+    : isMax
+      ? "HI-RES LOSSLESS"
+      : isHiFi
+        ? "LOSSLESS"
+        : "HIGH";
 
   const content = (
     <>

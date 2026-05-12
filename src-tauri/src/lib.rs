@@ -1,10 +1,11 @@
 mod audio;
 pub mod cache;
+pub mod classical;
 pub mod cli;
 mod commands;
-mod crypto;
+pub mod crypto;
 mod discord;
-mod embedded_config;
+pub mod embedded_config;
 mod embedded_lastfm;
 mod embedded_librefm;
 mod error;
@@ -20,7 +21,7 @@ mod signal_path;
 mod stats;
 #[cfg(target_os = "linux")]
 mod tray;
-mod tidal_api;
+pub mod tidal_api;
 
 pub use error::SoneError;
 pub use signal_path::{SignalPath, SignalPathTracker};
@@ -152,10 +153,13 @@ pub struct AppState {
     pub audio_player: AudioPlayer,
     pub llm_settings: Mutex<llm::LLMSettings>,
     pub share_link: Arc<share_link::ShareLink>,
-    pub tidal_client: Mutex<TidalClient>,
+    pub tidal_client: Arc<Mutex<TidalClient>>,
     pub settings_path: PathBuf,
     pub cache_dir: PathBuf,
-    pub disk_cache: DiskCache,
+    pub disk_cache: Arc<DiskCache>,
+    /// Classical Hub catalog service. Read-only with respect to audio
+    /// routing — orchestrates MB / Wikipedia / Tidal lookups + cache.
+    pub classical: Arc<classical::CatalogService>,
     pub crypto: Arc<Crypto>,
     pub minimize_to_tray: AtomicBool,
     pub decorations: AtomicBool,
@@ -226,7 +230,7 @@ impl AppState {
             }
         };
 
-        let disk_cache = DiskCache::new(&cache_dir, crypto.clone());
+        let disk_cache = Arc::new(DiskCache::new(&cache_dir, crypto.clone()));
 
         // Load preferences from saved settings (decrypt if needed)
         let saved = fs::read(&settings_path)
@@ -320,14 +324,34 @@ impl AppState {
             app_handle.clone(),
         ));
 
+        // Tidal client + Classical Hub catalog. The catalog reuses the
+        // same Tidal client (so token refreshes/rotations automatically
+        // reach catalog lookups) and the same DiskCache. It does not
+        // touch any audio routing — read-only catalog logic only.
+        let tidal_client = Arc::new(Mutex::new(TidalClient::new(&proxy_settings)));
+        let classical_http = crate::tidal_api::build_http_client(&proxy_settings)
+            .unwrap_or_else(|_| {
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                    .unwrap()
+            });
+        let classical = classical::build_catalog_service(
+            Arc::clone(&disk_cache),
+            classical_http,
+            Arc::clone(&tidal_client),
+            Arc::clone(&stats),
+        );
+
         Self {
             audio_player,
             llm_settings: Mutex::new(llm_settings_initial),
             share_link,
-            tidal_client: Mutex::new(TidalClient::new(&proxy_settings)),
+            tidal_client,
             settings_path,
             cache_dir,
             disk_cache,
+            classical,
             crypto,
             minimize_to_tray: AtomicBool::new(minimize_to_tray),
             decorations: AtomicBool::new(decorations),
@@ -547,6 +571,36 @@ pub fn run() {
             }
 
             app.manage(AppState::new(app.handle().clone()));
+
+            // Phase 1: wire the classical catalog as the scrobble
+            // manager's parent-Work resolver. Best-effort, non-blocking.
+            {
+                let state = app.state::<AppState>();
+                let resolver: std::sync::Arc<dyn scrobble::WorkMbidResolver> =
+                    std::sync::Arc::clone(&state.classical)
+                        as std::sync::Arc<dyn scrobble::WorkMbidResolver>;
+                let manager_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let st = manager_handle.state::<AppState>();
+                    st.scrobble_manager.set_work_resolver(resolver).await;
+                });
+            }
+
+            // Phase 6 (B6.5): pre-warm the canon top-30 composers in
+            // the background so the Hub Listen Now landing is warm
+            // when the user first opens it. Delayed by 12s so we
+            // don't contend with auth + initial settings load. The
+            // task drops naturally on app shutdown — it holds an
+            // Arc<CatalogService>, no AppState.
+            {
+                let prewarm_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+                    let st = prewarm_handle.state::<AppState>();
+                    let catalog = std::sync::Arc::clone(&st.classical);
+                    catalog.prewarm_canon(30).await;
+                });
+            }
 
             // Apply saved audio mode to audio thread
             {
@@ -956,6 +1010,44 @@ pub fn run() {
             commands::share::share_stop,
             commands::share::share_status,
             commands::share::share_set_state,
+            // classical hub
+            commands::classical::get_classical_work,
+            commands::classical::get_classical_recording,
+            commands::classical::get_classical_composer,
+            commands::classical::resolve_classical_work_for_recording,
+            commands::classical::list_classical_top_composers,
+            commands::classical::list_classical_composers_by_era,
+            commands::classical::list_classical_works_by_composer,
+            // Phase 9 (B9.3 / B9.4) — bucketed composer view.
+            commands::classical::list_classical_composer_buckets,
+            commands::classical::list_classical_works_in_bucket,
+            // Phase 9 (B9.6) — extended editorial notes.
+            commands::classical::get_classical_extended_note,
+            commands::classical::resolve_classical_movement,
+            commands::classical::refresh_classical_work_qualities,
+            // Phase 7 — Tidal availability re-check
+            commands::classical::recheck_classical_work_tidal,
+            commands::classical::get_classical_extended_total,
+            commands::classical::search_classical,
+            commands::classical::list_classical_editorial_picks,
+            commands::classical::set_classical_editors_choice,
+            commands::classical::clear_classical_editors_choice,
+            commands::classical::read_classical_listening_guide,
+            // Phase 6 — personalisation + Wikidata + browse-by-conductor
+            commands::classical::list_top_classical_works,
+            commands::classical::list_top_classical_composers,
+            commands::classical::get_classical_overview,
+            commands::classical::get_classical_discovery_curve,
+            commands::classical::list_recent_classical_sessions,
+            commands::classical::list_classical_recording_comparison,
+            commands::classical::add_classical_favorite,
+            commands::classical::remove_classical_favorite,
+            commands::classical::is_classical_favorite,
+            commands::classical::list_classical_favorites,
+            commands::classical::list_classical_related_composers,
+            commands::classical::get_classical_artist_discography,
+            commands::classical::prewarm_classical_canon,
+            commands::scrobble::get_current_classical_work_mbid,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

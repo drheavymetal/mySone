@@ -1,0 +1,666 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-02",
+  "documentation": "Curated editorial seeds for the Classical Hub. Each work entry holds a recommended recording (composer + performer + year + label) — text-search resolvable via the Phase 1 cascade matcher. We do NOT pin Tidal track ids here: those are unstable and resolved at runtime. Sources cited per entry when the choice is debatable; bias towards consensus picks (Gramophone Hall of Fame, Penguin Guide rosettes, BBC Building a Library). See D-020.",
+  "composers": [
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "name": "Ludwig van Beethoven",
+      "editor_note": "Beethoven's late period redrew the boundary between symphony and oratorio, between sonata and meditation; his Ninth still defines the orchestral apex of Western art music."
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "name": "Johann Sebastian Bach",
+      "editor_note": "Bach was the summation of the Baroque: a polyphonic intelligence so total that subsequent centuries kept rediscovering rather than surpassing him."
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "name": "Wolfgang Amadeus Mozart",
+      "editor_note": "Mozart's clarity is deceptive: every Classical-era surface holds an emotional density that Romantic composers spent a century trying to recapture."
+    },
+    {
+      "composer_mbid": "8d610e51-64b4-4654-b8df-064b0fb7a9d9",
+      "name": "Gustav Mahler",
+      "editor_note": "Mahler stretched the symphony to embrace the world — folk song, parody, despair, redemption — and changed forever what the form could carry."
+    },
+    {
+      "composer_mbid": "9ddd7abc-9e1b-471d-8031-583bc6bc8be9",
+      "name": "Pyotr Ilyich Tchaikovsky",
+      "editor_note": "Tchaikovsky fused Russian melody with Western symphonic architecture; his ballets remain the standard repertoire for orchestral colour and pathos."
+    },
+    {
+      "composer_mbid": "c70d12a2-24fe-4f83-a6e6-57d84f8efb51",
+      "name": "Johannes Brahms",
+      "editor_note": "Brahms inherited Beethoven's symphonic burden and answered it with structural rigour and contrapuntal depth — the last classicist before modernism."
+    },
+    {
+      "composer_mbid": "5ae54dee-4dba-49c0-802a-a3b3b3adfe9b",
+      "name": "Philip Glass",
+      "editor_note": "Glass redefined classical music's relationship with repetition, transforming minimalism from austerity into a vehicle for cinematic narrative."
+    },
+    {
+      "composer_mbid": "f1bedf1f-4445-4651-9c35-f4a3f3860a13",
+      "name": "Giuseppe Verdi",
+      "editor_note": "Verdi turned Italian opera into a vehicle for moral and political drama, raising the genre to symphonic stature without sacrificing melody."
+    },
+    {
+      "composer_mbid": "be50643c-0377-4968-b48c-47e06b2e2a3b",
+      "name": "Claude Debussy",
+      "editor_note": "Debussy dissolved harmonic gravity into colour and texture, opening the door to twentieth-century music while remaining quintessentially French."
+    },
+    {
+      "composer_mbid": "519dd32e-8f30-4380-8826-7aa99169e1bb",
+      "name": "Dmitri Shostakovich",
+      "editor_note": "Shostakovich wrote symphonies as coded autobiography under Stalin, a private music made public — irony and devastation in equal measure."
+    },
+    {
+      "composer_mbid": "ad79836d-9849-44df-8789-180bbc823f3c",
+      "name": "Antonio Vivaldi",
+      "editor_note": "Vivaldi's instrumental concerti shaped the Baroque idiom Bach would inherit — relentless invention behind the famous Four Seasons."
+    },
+    {
+      "composer_mbid": "27870d47-bb98-42d1-bf2b-c7e972e6befc",
+      "name": "George Frideric Handel",
+      "editor_note": "Handel turned the late Baroque into public spectacle, perfecting the oratorio in English while remaining cosmopolitan to his core."
+    },
+    {
+      "composer_mbid": "ae0b2424-d4c5-4c54-82ac-fe3be5453270",
+      "name": "Arvo Pärt",
+      "editor_note": "Pärt's tintinnabuli style reduced post-tonal complexity to a meditative essence — sacred minimalism with no residue of pastiche."
+    },
+    {
+      "composer_mbid": "6fdd3b3e-1ea6-4da9-8d6f-8f8de01c133a",
+      "name": "Maurice Ravel",
+      "editor_note": "Ravel's craft was orchestrational genius poured into miniature forms, rivalling Debussy's harmonic invention with his own gem-cutter precision."
+    },
+    {
+      "composer_mbid": "3cd3882c-00f8-4362-a0c2-ad89ed248533",
+      "name": "Robert Schumann",
+      "editor_note": "Schumann's Romanticism is a literary one — every cycle a confession, every miniature a fragment of an unwritten novel."
+    }
+  ],
+  "works": [
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Symphony No. 9 in D minor",
+      "catalogue": "Op. 125",
+      "editor_note": "The summit of the symphonic repertoire — the first symphony to incorporate voices, ending in the universal address of Schiller's Ode to Joy.",
+      "editors_choice": {
+        "conductor": "Karajan",
+        "performer": "Berliner Philharmoniker",
+        "year": 1962,
+        "label": "Deutsche Grammophon",
+        "note": "The reference Beethoven cycle by critical consensus; Gramophone Hall of Fame, Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Symphony No. 5 in C minor",
+      "catalogue": "Op. 67",
+      "editor_note": "The four-note motif that opens Beethoven's Fifth has become the Western world's shorthand for fate itself.",
+      "editors_choice": {
+        "conductor": "Carlos Kleiber",
+        "performer": "Wiener Philharmoniker",
+        "year": 1974,
+        "label": "Deutsche Grammophon",
+        "note": "Considered by many critics the greatest symphonic recording ever made; BBC Building a Library top choice."
+      }
+    },
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Symphony No. 3 in E flat major",
+      "catalogue": "Op. 55",
+      "editor_note": "The 'Eroica' broke open the Classical symphony — Beethoven's expansion of scale and emotional reach reshaped the genre overnight.",
+      "editors_choice": {
+        "conductor": "John Eliot Gardiner",
+        "performer": "Orchestre Révolutionnaire et Romantique",
+        "year": 1992,
+        "label": "Archiv",
+        "note": "Period-instrument reference; Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Piano Sonata No. 14",
+      "catalogue": "Op. 27 No. 2",
+      "editor_note": "The 'Moonlight' Sonata's opening Adagio is the most-played piece of late-eighteenth-century piano music, masking the volcanic finale that follows.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Wilhelm Kempff",
+        "year": 1965,
+        "label": "Deutsche Grammophon",
+        "note": "Kempff's Beethoven cycle remains a touchstone of patrician interpretation."
+      }
+    },
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Piano Concerto No. 5",
+      "catalogue": "Op. 73",
+      "editor_note": "The 'Emperor' is Beethoven's grandest concerto, written under the Napoleonic occupation of Vienna — heroic music answering imperial trauma.",
+      "editors_choice": {
+        "conductor": "Bernard Haitink",
+        "performer": "Murray Perahia · Royal Concertgebouw",
+        "year": 1986,
+        "label": "Sony Classical",
+        "note": "Perahia's Beethoven concertos are widely regarded as a modern reference."
+      }
+    },
+    {
+      "composer_mbid": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+      "title_canonical": "Missa solemnis",
+      "catalogue": "Op. 123",
+      "editor_note": "Beethoven's most ambitious sacred work — written 'from the heart, may it return to the heart' — and one of the most demanding choral scores in the canon.",
+      "editors_choice": {
+        "conductor": "Klemperer",
+        "performer": "Philharmonia Orchestra",
+        "year": 1966,
+        "label": "EMI",
+        "note": "Klemperer's monumental architecture remains the philosophical reference."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "Goldberg Variations",
+      "catalogue": "BWV 988",
+      "editor_note": "Bach's monumental aria with thirty variations — written, by tradition, to soothe an insomniac count, and a peak of contrapuntal imagination.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Glenn Gould",
+        "year": 1981,
+        "label": "Sony Classical",
+        "note": "Gould's second recording: slower, more meditative, his testament reading. Gramophone Hall of Fame."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "Mass in B minor",
+      "catalogue": "BWV 232",
+      "editor_note": "Bach's encyclopaedic summation of the Latin Ordinary, drawing on a lifetime of vocal writing — never performed in his lifetime.",
+      "editors_choice": {
+        "conductor": "Philippe Herreweghe",
+        "performer": "Collegium Vocale Gent",
+        "year": 1998,
+        "label": "Harmonia Mundi",
+        "note": "Period-instrument reference; Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "Brandenburg Concertos",
+      "catalogue": "BWV 1046-1051",
+      "editor_note": "Bach's six Brandenburg concertos showcase every Baroque instrumental combination he could imagine — a compendium of the genre.",
+      "editors_choice": {
+        "conductor": "Trevor Pinnock",
+        "performer": "The English Concert",
+        "year": 1982,
+        "label": "Archiv",
+        "note": "Standard period-instrument reference for decades."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "St Matthew Passion",
+      "catalogue": "BWV 244",
+      "editor_note": "The summit of Lutheran sacred music — three hours of overlapping double choruses, recitative, and the most intimate aria writing in Bach's output.",
+      "editors_choice": {
+        "conductor": "John Eliot Gardiner",
+        "performer": "Monteverdi Choir · English Baroque Soloists",
+        "year": 1989,
+        "label": "Archiv",
+        "note": "Gardiner's St Matthew is widely regarded as a benchmark; Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "Cello Suites",
+      "catalogue": "BWV 1007-1012",
+      "editor_note": "Six unaccompanied cello suites built on dance forms — Bach's exploration of how much polyphony a single melodic line can imply.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Pablo Casals",
+        "year": 1939,
+        "label": "EMI",
+        "note": "The recording that brought the Suites back into the repertoire after centuries of neglect; foundational."
+      }
+    },
+    {
+      "composer_mbid": "24f1766e-9635-4d58-a4d4-9413f9f98a4c",
+      "title_canonical": "Well-Tempered Clavier",
+      "catalogue": "BWV 846-893",
+      "editor_note": "Two books of preludes and fugues in every major and minor key — the pianist's Old Testament, the New being Beethoven's sonatas.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "András Schiff",
+        "year": 2012,
+        "label": "ECM New Series",
+        "note": "Schiff's WTC is widely regarded as the most lucid modern reading."
+      }
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "title_canonical": "Requiem in D minor",
+      "catalogue": "K. 626",
+      "editor_note": "Mozart's last work, left incomplete at his death — its dark monumental tone unlike anything else in his output.",
+      "editors_choice": {
+        "conductor": "John Eliot Gardiner",
+        "performer": "Monteverdi Choir · English Baroque Soloists",
+        "year": 1986,
+        "label": "Philips",
+        "note": "Gardiner's HIP reading uses the Maunder completion and is widely cited as a benchmark."
+      }
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "title_canonical": "Don Giovanni",
+      "catalogue": "K. 527",
+      "editor_note": "Mozart's most morally complex opera — a Don Juan tragedy that ends in damnation, with arias of staggering psychological depth.",
+      "editors_choice": {
+        "conductor": "Carlo Maria Giulini",
+        "performer": "Philharmonia Orchestra",
+        "year": 1959,
+        "label": "EMI",
+        "note": "Cast featuring Eberhard Wächter, Joan Sutherland, Elisabeth Schwarzkopf — generally regarded as the studio reference."
+      }
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "title_canonical": "Symphony No. 41 in C major",
+      "catalogue": "K. 551",
+      "editor_note": "The 'Jupiter' is Mozart's farewell to the symphony — a finale combining five contrapuntal subjects in a fugal coda of unprecedented density.",
+      "editors_choice": {
+        "conductor": "Karl Böhm",
+        "performer": "Berliner Philharmoniker",
+        "year": 1966,
+        "label": "Deutsche Grammophon",
+        "note": "Böhm's late-Mozart cycle is a paragon of Classical-period interpretation."
+      }
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "title_canonical": "Piano Concerto No. 21 in C major",
+      "catalogue": "K. 467",
+      "editor_note": "The 'Elvira Madigan' Andante made this concerto famous in the 1960s — but the surrounding allegros are equally a peak of Mozart's concerto craft.",
+      "editors_choice": {
+        "conductor": "Murray Perahia",
+        "performer": "English Chamber Orchestra",
+        "year": 1976,
+        "label": "Sony Classical",
+        "note": "Perahia's complete Mozart concertos cycle is a critical reference."
+      }
+    },
+    {
+      "composer_mbid": "b972f589-fb0e-474e-b64a-803b0364fa75",
+      "title_canonical": "The Marriage of Figaro",
+      "catalogue": "K. 492",
+      "editor_note": "Mozart's first collaboration with Da Ponte — a comedy of class, gender, and forgiveness, with some of the most beautiful ensembles in opera.",
+      "editors_choice": {
+        "conductor": "Carlo Maria Giulini",
+        "performer": "Philharmonia Orchestra",
+        "year": 1960,
+        "label": "EMI",
+        "note": "Long considered the finest Figaro on disc; Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "8d610e51-64b4-4654-b8df-064b0fb7a9d9",
+      "title_canonical": "Symphony No. 9 in D major",
+      "editor_note": "Mahler's farewell symphony — a meditation on departure, written in the shadow of his own diagnosed heart disease.",
+      "editors_choice": {
+        "conductor": "Bernstein",
+        "performer": "Berliner Philharmoniker",
+        "year": 1979,
+        "label": "Deutsche Grammophon",
+        "note": "The Bernstein/Berlin live recording is widely cited as the reference Mahler 9; Gramophone Hall of Fame."
+      }
+    },
+    {
+      "composer_mbid": "8d610e51-64b4-4654-b8df-064b0fb7a9d9",
+      "title_canonical": "Symphony No. 2 in C minor",
+      "editor_note": "The 'Resurrection' Symphony's choral finale is one of the great affirmations in symphonic literature, answering its first movement's funeral march.",
+      "editors_choice": {
+        "conductor": "Bernstein",
+        "performer": "New York Philharmonic",
+        "year": 1987,
+        "label": "Deutsche Grammophon",
+        "note": "Bernstein's late Mahler cycle is the modern reference; multiple Gramophone awards."
+      }
+    },
+    {
+      "composer_mbid": "8d610e51-64b4-4654-b8df-064b0fb7a9d9",
+      "title_canonical": "Symphony No. 5 in C sharp minor",
+      "editor_note": "The Adagietto for harp and strings — heard at Visconti's funeral and in countless films — is the heart of Mahler's most-played symphony.",
+      "editors_choice": {
+        "conductor": "Bernstein",
+        "performer": "Wiener Philharmoniker",
+        "year": 1987,
+        "label": "Deutsche Grammophon",
+        "note": "Bernstein's late Vienna recordings of Mahler are a critical benchmark."
+      }
+    },
+    {
+      "composer_mbid": "9ddd7abc-9e1b-471d-8031-583bc6bc8be9",
+      "title_canonical": "Symphony No. 6 in B minor",
+      "catalogue": "Op. 74",
+      "editor_note": "The 'Pathétique' was Tchaikovsky's last symphony, premiered nine days before his death — a deliberate reversal of symphonic catharsis ending in despair.",
+      "editors_choice": {
+        "conductor": "Mravinsky",
+        "performer": "Leningrad Philharmonic",
+        "year": 1960,
+        "label": "Deutsche Grammophon",
+        "note": "Mravinsky's Leningrad recordings remain the Russian reference."
+      }
+    },
+    {
+      "composer_mbid": "9ddd7abc-9e1b-471d-8031-583bc6bc8be9",
+      "title_canonical": "Piano Concerto No. 1 in B flat minor",
+      "catalogue": "Op. 23",
+      "editor_note": "The opening unison piano chord is one of the most recognised gestures in nineteenth-century music — the rest of the concerto rivals it.",
+      "editors_choice": {
+        "conductor": "Kondrashin",
+        "performer": "Van Cliburn · RCA Symphony",
+        "year": 1958,
+        "label": "RCA",
+        "note": "Cliburn's recording after winning the first Tchaikovsky Competition in Moscow — a Cold War cultural milestone."
+      }
+    },
+    {
+      "composer_mbid": "9ddd7abc-9e1b-471d-8031-583bc6bc8be9",
+      "title_canonical": "Violin Concerto in D major",
+      "catalogue": "Op. 35",
+      "editor_note": "Initially declared 'unplayable', Tchaikovsky's Violin Concerto is now a centerpiece of the romantic concerto repertoire.",
+      "editors_choice": {
+        "conductor": "Rozhdestvensky",
+        "performer": "David Oistrakh · Moscow Philharmonic",
+        "year": 1968,
+        "label": "Melodiya",
+        "note": "Oistrakh's authoritative Russian reading is the historic reference."
+      }
+    },
+    {
+      "composer_mbid": "c70d12a2-24fe-4f83-a6e6-57d84f8efb51",
+      "title_canonical": "Symphony No. 4 in E minor",
+      "catalogue": "Op. 98",
+      "editor_note": "Brahms's last symphony — the finale's passacaglia (a Baroque form revived in the late nineteenth century) crowns his classicising achievement.",
+      "editors_choice": {
+        "conductor": "Carlos Kleiber",
+        "performer": "Wiener Philharmoniker",
+        "year": 1980,
+        "label": "Deutsche Grammophon",
+        "note": "Kleiber's only Brahms recording — Gramophone Hall of Fame, Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "c70d12a2-24fe-4f83-a6e6-57d84f8efb51",
+      "title_canonical": "Ein deutsches Requiem",
+      "catalogue": "Op. 45",
+      "editor_note": "Brahms set German biblical texts rather than the Latin Mass — a humanist consolation rather than a liturgical Requiem.",
+      "editors_choice": {
+        "conductor": "Klemperer",
+        "performer": "Philharmonia Orchestra · Schwarzkopf · Fischer-Dieskau",
+        "year": 1961,
+        "label": "EMI",
+        "note": "The Klemperer recording is the historic reference — slow, weighted, monumental."
+      }
+    },
+    {
+      "composer_mbid": "c70d12a2-24fe-4f83-a6e6-57d84f8efb51",
+      "title_canonical": "Violin Concerto in D major",
+      "catalogue": "Op. 77",
+      "editor_note": "Brahms wrote his Violin Concerto for Joseph Joachim — its slow movement opens with one of the most beloved oboe solos in the repertoire.",
+      "editors_choice": {
+        "conductor": "George Szell",
+        "performer": "David Oistrakh · Cleveland Orchestra",
+        "year": 1969,
+        "label": "EMI",
+        "note": "Oistrakh / Szell remain the critical reference for the Brahms VC."
+      }
+    },
+    {
+      "composer_mbid": "c70d12a2-24fe-4f83-a6e6-57d84f8efb51",
+      "title_canonical": "Piano Concerto No. 2 in B flat major",
+      "catalogue": "Op. 83",
+      "editor_note": "Symphony with piano obbligato, Brahms quipped — a four-movement concerto with the scale and weight of a symphony.",
+      "editors_choice": {
+        "conductor": "Bernard Haitink",
+        "performer": "Emil Gilels · Berliner Philharmoniker",
+        "year": 1972,
+        "label": "Deutsche Grammophon",
+        "note": "Gilels's Brahms 2 is widely regarded as the most magisterial reading on disc."
+      }
+    },
+    {
+      "composer_mbid": "5ae54dee-4dba-49c0-802a-a3b3b3adfe9b",
+      "title_canonical": "Glassworks",
+      "editor_note": "Glass's most accessible work — six pieces conceived as an introduction to his style, with the indelible opening 'Opening' for solo piano.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Philip Glass Ensemble",
+        "year": 1982,
+        "label": "CBS",
+        "note": "Composer's own ensemble recording remains the authoritative reading."
+      }
+    },
+    {
+      "composer_mbid": "5ae54dee-4dba-49c0-802a-a3b3b3adfe9b",
+      "title_canonical": "Akhnaten",
+      "editor_note": "The third in Glass's portrait-trilogy of revolutionaries (Einstein on the Beach, Satyagraha, Akhnaten) — a meditation on monotheism and exile.",
+      "editors_choice": {
+        "conductor": "Dennis Russell Davies",
+        "performer": "Stuttgart State Opera",
+        "year": 1987,
+        "label": "CBS Masterworks",
+        "note": "First commercial recording, supervised by the composer."
+      }
+    },
+    {
+      "composer_mbid": "5ae54dee-4dba-49c0-802a-a3b3b3adfe9b",
+      "title_canonical": "Violin Concerto No. 1",
+      "editor_note": "Glass's most performed concert work — minimalist textures supporting a soloist of unusual lyrical scope.",
+      "editors_choice": {
+        "conductor": "Christoph von Dohnányi",
+        "performer": "Gidon Kremer · Wiener Philharmoniker",
+        "year": 1993,
+        "label": "Deutsche Grammophon",
+        "note": "Kremer's advocacy brought the Glass concerto into the mainstream Romantic-concerto orbit."
+      }
+    },
+    {
+      "composer_mbid": "f1bedf1f-4445-4651-9c35-f4a3f3860a13",
+      "title_canonical": "Otello",
+      "editor_note": "Verdi's late masterpiece on Boito's libretto — Shakespeare distilled into the most concentrated tragedy in opera.",
+      "editors_choice": {
+        "conductor": "Carlos Kleiber",
+        "performer": "La Scala · Plácido Domingo · Mirella Freni",
+        "year": 1976,
+        "label": "Deutsche Grammophon",
+        "note": "Kleiber's Otello is widely regarded as the studio reference."
+      }
+    },
+    {
+      "composer_mbid": "f1bedf1f-4445-4651-9c35-f4a3f3860a13",
+      "title_canonical": "La traviata",
+      "editor_note": "Verdi's intimate domestic tragedy — Violetta's vocal line moves from coloratura giddiness to deathbed simplicity in three acts.",
+      "editors_choice": {
+        "conductor": "Carlos Kleiber",
+        "performer": "Bavarian State Opera · Ileana Cotrubaș · Plácido Domingo",
+        "year": 1976,
+        "label": "Deutsche Grammophon",
+        "note": "Kleiber's Traviata is the modern studio reference; multiple critic surveys put it first."
+      }
+    },
+    {
+      "composer_mbid": "f1bedf1f-4445-4651-9c35-f4a3f3860a13",
+      "title_canonical": "Requiem",
+      "editor_note": "Verdi's setting of the Requiem Mass after Manzoni's death — operatic in scale and intensity, sacred in conviction.",
+      "editors_choice": {
+        "conductor": "Carlo Maria Giulini",
+        "performer": "Philharmonia Orchestra · Schwarzkopf · Ludwig",
+        "year": 1964,
+        "label": "EMI",
+        "note": "Giulini's Verdi Requiem is the long-standing critical reference."
+      }
+    },
+    {
+      "composer_mbid": "be50643c-0377-4968-b48c-47e06b2e2a3b",
+      "title_canonical": "La Mer",
+      "editor_note": "Three symphonic sketches that reinvented orchestral writing — colour and motion replacing development as structural principles.",
+      "editors_choice": {
+        "conductor": "Pierre Boulez",
+        "performer": "Cleveland Orchestra",
+        "year": 1991,
+        "label": "Deutsche Grammophon",
+        "note": "Boulez's analytical clarity in Cleveland is the standard reference for late Debussy."
+      }
+    },
+    {
+      "composer_mbid": "be50643c-0377-4968-b48c-47e06b2e2a3b",
+      "title_canonical": "Prélude à l'après-midi d'un faune",
+      "editor_note": "The piece historians often cite as opening twentieth-century music — eight minutes that broke nineteenth-century harmony.",
+      "editors_choice": {
+        "conductor": "Pierre Boulez",
+        "performer": "Cleveland Orchestra",
+        "year": 1991,
+        "label": "Deutsche Grammophon",
+        "note": "Boulez/Cleveland Debussy edition; benchmark recording for orchestral Debussy."
+      }
+    },
+    {
+      "composer_mbid": "519dd32e-8f30-4380-8826-7aa99169e1bb",
+      "title_canonical": "Symphony No. 5 in D minor",
+      "catalogue": "Op. 47",
+      "editor_note": "Composed during Shostakovich's first denunciation by Soviet authorities — a public 'rehabilitation' that hides ironic and bitter undertones.",
+      "editors_choice": {
+        "conductor": "Mstislav Rostropovich",
+        "performer": "National Symphony Orchestra Washington",
+        "year": 1989,
+        "label": "Teldec",
+        "note": "Rostropovich's late Shostakovich cycle is regarded as the most testimonial reading."
+      }
+    },
+    {
+      "composer_mbid": "519dd32e-8f30-4380-8826-7aa99169e1bb",
+      "title_canonical": "Symphony No. 7 in C major",
+      "catalogue": "Op. 60",
+      "editor_note": "The 'Leningrad' Symphony — composed during the siege of Leningrad — became a wartime symbol broadcast worldwide.",
+      "editors_choice": {
+        "conductor": "Bernstein",
+        "performer": "Chicago Symphony Orchestra",
+        "year": 1988,
+        "label": "Deutsche Grammophon",
+        "note": "Bernstein/CSO Leningrad: searing studio recording, Gramophone Award winner."
+      }
+    },
+    {
+      "composer_mbid": "519dd32e-8f30-4380-8826-7aa99169e1bb",
+      "title_canonical": "String Quartet No. 8 in C minor",
+      "catalogue": "Op. 110",
+      "editor_note": "Shostakovich's most personal quartet — written 'in memory of the victims of fascism and war', signed in his musical monogram DSCH.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Borodin Quartet",
+        "year": 1978,
+        "label": "Melodiya",
+        "note": "The Borodin Quartet's complete Shostakovich is a foundational document."
+      }
+    },
+    {
+      "composer_mbid": "ad79836d-9849-44df-8789-180bbc823f3c",
+      "title_canonical": "The Four Seasons",
+      "editor_note": "Vivaldi's four violin concertos depicting the seasons — possibly the best-known piece of Baroque music, founding the programme-music tradition.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Fabio Biondi · Europa Galante",
+        "year": 1991,
+        "label": "Opus 111",
+        "note": "Biondi's HIP Four Seasons remade the modern conception of the work."
+      }
+    },
+    {
+      "composer_mbid": "27870d47-bb98-42d1-bf2b-c7e972e6befc",
+      "title_canonical": "Messiah",
+      "catalogue": "HWV 56",
+      "editor_note": "The most-performed oratorio in the English-speaking world — Handel composed it in 24 days, and its reception in Dublin (1742) defined the genre.",
+      "editors_choice": {
+        "conductor": "Christopher Hogwood",
+        "performer": "Academy of Ancient Music",
+        "year": 1979,
+        "label": "L'Oiseau-Lyre",
+        "note": "Hogwood/AAM was the first major HIP Messiah; remains a standard reference."
+      }
+    },
+    {
+      "composer_mbid": "27870d47-bb98-42d1-bf2b-c7e972e6befc",
+      "title_canonical": "Water Music",
+      "editor_note": "Handel's outdoor suites for King George I's barge party on the Thames — pure Baroque sociability for orchestra.",
+      "editors_choice": {
+        "conductor": "John Eliot Gardiner",
+        "performer": "English Baroque Soloists",
+        "year": 1991,
+        "label": "Philips",
+        "note": "Gardiner's HIP Water Music is the long-standing critical reference."
+      }
+    },
+    {
+      "composer_mbid": "ae0b2424-d4c5-4c54-82ac-fe3be5453270",
+      "title_canonical": "Tabula rasa",
+      "editor_note": "Pärt's double concerto for two violins, prepared piano and strings — a sonic embodiment of the 'blank slate' aesthetic of his tintinnabuli style.",
+      "editors_choice": {
+        "conductor": "Saulius Sondeckis",
+        "performer": "Gidon Kremer · Lithuanian Chamber Orchestra",
+        "year": 1984,
+        "label": "ECM New Series",
+        "note": "Kremer's premiere recording on ECM defined contemporary Pärt reception."
+      }
+    },
+    {
+      "composer_mbid": "6fdd3b3e-1ea6-4da9-8d6f-8f8de01c133a",
+      "title_canonical": "Boléro",
+      "editor_note": "Ravel's relentless C major crescendo over a single theme — described by the composer as 'orchestration without music', yet adopted as a universal hit.",
+      "editors_choice": {
+        "conductor": "Charles Munch",
+        "performer": "Boston Symphony Orchestra",
+        "year": 1956,
+        "label": "RCA",
+        "note": "Munch/Boston's Boléro remains the orchestral-colour reference."
+      }
+    },
+    {
+      "composer_mbid": "6fdd3b3e-1ea6-4da9-8d6f-8f8de01c133a",
+      "title_canonical": "Piano Concerto in G",
+      "editor_note": "Ravel's jazz-inflected concerto, written for himself but premiered by Marguerite Long after his health failed — the slow movement is one of his most personal pages.",
+      "editors_choice": {
+        "conductor": "Claudio Abbado",
+        "performer": "Martha Argerich · Berliner Philharmoniker",
+        "year": 1984,
+        "label": "Deutsche Grammophon",
+        "note": "Argerich's Ravel concerto is the modern reference; Penguin Guide rosette."
+      }
+    },
+    {
+      "composer_mbid": "3cd3882c-00f8-4362-a0c2-ad89ed248533",
+      "title_canonical": "Piano Concerto in A minor",
+      "catalogue": "Op. 54",
+      "editor_note": "Schumann's only completed concerto — written for his wife Clara, the most celebrated pianist of the era — and a model of intimate Romantic concerto writing.",
+      "editors_choice": {
+        "conductor": "Bernard Haitink",
+        "performer": "Murray Perahia · Berliner Philharmoniker",
+        "year": 1989,
+        "label": "Sony Classical",
+        "note": "Perahia's Schumann is a critical reference; Gramophone Award winner."
+      }
+    },
+    {
+      "composer_mbid": "3cd3882c-00f8-4362-a0c2-ad89ed248533",
+      "title_canonical": "Kinderszenen",
+      "catalogue": "Op. 15",
+      "editor_note": "Thirteen miniatures depicting scenes from childhood — among them 'Träumerei', perhaps the most-played encore in piano literature.",
+      "editors_choice": {
+        "conductor": null,
+        "performer": "Vladimir Horowitz",
+        "year": 1962,
+        "label": "Sony Classical",
+        "note": "Horowitz's Kinderszenen is widely cited as a benchmark, especially the Carnegie Hall live recording."
+      }
+    }
+  ]
+}
